@@ -1,0 +1,52 @@
+version: '3.8'
+
+# Docker Compose with MongoDB included
+# Use this if MongoDB is not installed on the server
+# This will run both backend and MongoDB in Docker
+
+services:
+  # MongoDB Service
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=Admin@123
+    command: mongod --auth
+    networks:
+      - app-network
+
+  # Backend API Service
+  backend:
+    build: .
+    container_name: backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://admin:Admin%40123@mongodb:27017/myapp?authSource=admin
+      - PORT=5000
+      - JWT_SECRET=${JWT_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL}
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - mongodb
+    networks:
+      - app-network
+
+volumes:
+  mongodb_data:
+  mongodb_config:
+
+networks:
+  app-network:
+    driver: bridge
+
