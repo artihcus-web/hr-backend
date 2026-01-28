@@ -1,0 +1,105 @@
+name: Build and Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build and Push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: ${{ secrets.DOCKER_USERNAME }}/hr-backend:latest
+        cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/hr-backend:buildcache
+        cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/hr-backend:buildcache,mode=max
+
+    - name: Verify Pushed Image
+      run: docker pull ${{ secrets.DOCKER_USERNAME }}/hr-backend:latest
+
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Add server to known hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+        chmod 600 ~/.ssh/known_hosts
+    
+    - name: Deploy to server
+      env:
+        SERVER_USER: ${{ secrets.SERVER_USER }}
+        SERVER_IP: ${{ secrets.SERVER_IP }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      run: |
+        ssh -o StrictHostKeyChecking=accept-new ${SERVER_USER}@${SERVER_IP} << EOF
+        cd /data/backend
+        docker pull harshava123/hr-backend:latest
+        docker container prune -f
+        docker-compose down --remove-orphans
+        # Update .env with email credentials
+        if ! grep -q "EMAIL_USER" .env 2>/dev/null; then
+          echo "" >> .env
+          echo "# Email Configuration" >> .env
+          echo "EMAIL_USER=${EMAIL_USER}" >> .env
+          echo "EMAIL_PASSWORD=${EMAIL_PASSWORD}" >> .env
+        else
+          sed -i "s|EMAIL_USER=.*|EMAIL_USER=${EMAIL_USER}|" .env
+          sed -i "s|EMAIL_PASSWORD=.*|EMAIL_PASSWORD=${EMAIL_PASSWORD}|" .env
+        fi
+        docker-compose up -d
+        sleep 5
+        docker ps
+        EOF
+    
+    - name: Verify deployment
+      env:
+        SERVER_USER: ${{ secrets.SERVER_USER }}
+        SERVER_IP: ${{ secrets.SERVER_IP }}
+      run: |
+        sleep 10
+        ssh -o StrictHostKeyChecking=accept-new ${SERVER_USER}@${SERVER_IP} << 'EOF'
+        echo "=== Checking Docker Containers ==="
+        docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.CreatedAt}}"
+        echo ""
+        echo "=== Checking Current Container Image ==="
+        CONTAINER_IMAGE=$(docker inspect backend --format='{{.Image}}' 2>/dev/null || docker inspect hr-portal-backend_backend --format='{{.Image}}' 2>/dev/null || echo "N/A")
+        LATEST_IMAGE=$(docker images harshava123/ser-backend:latest --format='{{.ID}}' 2>/dev/null || echo "N/A")
+        echo "Container Image ID: $CONTAINER_IMAGE"
+        echo "Latest Image ID: $LATEST_IMAGE"
+        echo ""
+        echo "=== Pulling Latest Image ==="
+        docker pull harshava123/ser-backend:latest
+        echo ""
+        echo "=== Verifying Health Endpoint ==="
+        curl -f http://127.0.0.1:3000/api/health || curl -f http://127.0.0.1:5000/api/health
+        echo ""
+        echo "=== Checking if Container Uses Latest Image ==="
+        NEW_LATEST_IMAGE=$(docker images harshava123/ser-backend:latest --format='{{.ID}}')
+        if [ "$CONTAINER_IMAGE" != "$NEW_LATEST_IMAGE" ] && [ "$CONTAINER_IMAGE" != "N/A" ]; then
+          echo "⚠️  Container may need restart to use latest image"
+        else
+          echo "✅ Container is using latest image"
+        fi
+        EOF
