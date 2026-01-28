@@ -7,6 +7,7 @@ import projectRoutes from './routes/projects.js'
 import timesheetRoutes from './routes/timesheet.js'
 import benchRoutes from './routes/benches.js'
 import employeeRoutes from './routes/employees.js'
+import activityRoutes from './routes/activity.js'
 import User from './models/User.js'
 
 // CI/CD auto-deployment: Builds Docker image, pushes to Docker Hub, deploys to server
@@ -74,6 +75,7 @@ app.use('/api/projects', projectRoutes)
 app.use('/api/timesheet', timesheetRoutes)
 app.use('/api/benches', benchRoutes)
 app.use('/api/employees', employeeRoutes)
+app.use('/api/activity', activityRoutes)
 
 // Health check route
 app.get('/api/health', (_req, res) => {

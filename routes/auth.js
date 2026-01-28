@@ -2,6 +2,7 @@ import express from 'express'
 import jwt from 'jsonwebtoken'
 import User from '../models/User.js'
 import Project from '../models/Project.js'
+import ActivityLog from '../models/ActivityLog.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import crypto from 'crypto'
 import { sendPasswordResetEmail } from '../services/emailService.js'
@@ -157,6 +158,14 @@ router.post('/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '7d' }
     )
+
+    // Log Activity
+    await ActivityLog.create({
+      user: user._id,
+      action: 'LOGIN',
+      description: `User ${user.fullName} logged in.`,
+      target: 'Auth'
+    })
 
     res.json({
       message: 'Login successful',

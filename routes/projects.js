@@ -1,6 +1,7 @@
 import express from 'express'
 import Project from '../models/Project.js'
 import User from '../models/User.js'
+import ActivityLog from '../models/ActivityLog.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 
 const router = express.Router()
@@ -163,6 +164,14 @@ router.post('/', authenticate, requireRole('admin'), async (req, res) => {
 
     await project.save()
 
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'PROJECT_CREATED',
+      description: `Project ${project.projectName} created.`,
+      target: project.projectName
+    })
+
     res.status(201).json({
       message: 'Project created successfully',
       project
@@ -199,6 +208,16 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
     if (description !== undefined) project.description = description
     if (status) project.status = status
     if (shiftTiming) project.shiftTiming = shiftTiming
+
+    // Update Team if provided
+    // Note: This replaces the existing lists. 
+    if (req.body.employees && Array.isArray(req.body.employees)) {
+      project.employees = req.body.employees
+    }
+
+    if (req.body.projectManagers && Array.isArray(req.body.projectManagers)) {
+      project.projectManagers = req.body.projectManagers
+    }
 
     await project.save()
 
