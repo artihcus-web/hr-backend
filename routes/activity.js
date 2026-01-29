@@ -8,7 +8,7 @@ const router = express.Router()
 router.get('/', authenticate, requireRole('admin'), async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10
-        const logs = await ActivityLog.find()
+        const logs = await ActivityLog.find({ action: { $ne: 'LOGIN' } })
             .populate('user', 'firstName lastName email role')
             .sort({ timestamp: -1 })
             .limit(limit)

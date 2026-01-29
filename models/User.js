@@ -102,9 +102,17 @@ const userSchema = new mongoose.Schema({
   employeeNumberSeries: String,
 
   // Professional Information
-  education: String,
-  experience: String,
-  skills: String,
+  education: [{
+    institute: String,
+    fromDate: Date,
+    toDate: Date
+  }],
+  experience: [{
+    organization: String,
+    fromDate: Date,
+    toDate: Date
+  }],
+  skills: [String],
   salary: Number,
 
   // Bank Details

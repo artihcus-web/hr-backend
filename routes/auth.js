@@ -159,13 +159,15 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     )
 
-    // Log Activity
+    // Log Activity (Disabled to avoid clutter)
+    /*
     await ActivityLog.create({
       user: user._id,
       action: 'LOGIN',
       description: `User ${user.fullName} logged in.`,
       target: 'Auth'
     })
+    */
 
     res.json({
       message: 'Login successful',
@@ -317,6 +319,14 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
       )
     }
 
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id, // Admin who performed the action
+      action: 'CREATE_USER',
+      description: `Created new employee: ${user.fullName} (${user.role})`,
+      target: user._id.toString()
+    })
+
     res.status(201).json({
       message: 'Employee created successfully',
       user: {
@@ -456,6 +466,14 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
       }
     }
 
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'UPDATE_USER',
+      description: `Updated employee: ${user.fullName}`,
+      target: user._id.toString()
+    })
+
     res.json({
       message: 'Employee updated successfully',
       user: {
@@ -487,6 +505,15 @@ router.delete('/users/:id', authenticate, requireRole('admin'), async (req, res)
     }
 
     await User.findByIdAndDelete(req.params.id)
+
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'DELETE_USER',
+      description: `Deleted employee: ${user.fullName}`,
+      target: user._id.toString()
+    })
+
     res.json({ message: 'Employee deleted successfully' })
   } catch (error) {
     console.error('Delete user error:', error)

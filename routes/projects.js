@@ -221,6 +221,14 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
 
     await project.save()
 
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'UPDATE_PROJECT',
+      description: `Updated project: ${project.projectName}`,
+      target: project.projectName
+    })
+
     res.json({
       message: 'Project updated successfully',
       project
@@ -315,6 +323,14 @@ router.post('/:id/assign-employees', authenticate, requireRole('admin'), async (
       }
     }
 
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'ASSIGN_EMPLOYEES',
+      description: `Assigned ${employeeIds.length} employees to project ${project.projectName}`,
+      target: project.projectName
+    })
+
     res.json({
       message: 'Employees assigned successfully',
       project
@@ -359,6 +375,14 @@ router.post('/:id/assign-managers', authenticate, requireRole('admin'), async (r
 
     await project.save()
     await project.populate('projectManagers', 'username fullName email employeeId')
+
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'ASSIGN_MANAGERS',
+      description: `Assigned ${managerIds.length} managers to project ${project.projectName}`,
+      target: project.projectName
+    })
 
     res.json({
       message: 'Project managers assigned successfully',
@@ -509,6 +533,14 @@ router.delete('/:id', authenticate, requireRole('admin'), async (req, res) => {
     if (!project) {
       return res.status(404).json({ message: 'Project not found' })
     }
+
+    // Log Activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'DELETE_PROJECT',
+      description: `Deleted project: ${project.projectName}`,
+      target: project.projectName
+    })
 
     res.json({ message: 'Project deleted successfully' })
   } catch (error) {
