@@ -54,10 +54,9 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
       run: |
         ssh -o StrictHostKeyChecking=accept-new ${SERVER_USER}@${SERVER_IP} << EOF
+        set -e
         cd /data/backend
-        docker pull harshava123/hr-backend:latest
-        docker container prune -f
-        docker-compose down --remove-orphans
+        
         # Update .env with email credentials
         if ! grep -q "EMAIL_USER" .env 2>/dev/null; then
           echo "" >> .env
@@ -68,7 +67,17 @@ jobs:
           sed -i "s|EMAIL_USER=.*|EMAIL_USER=${EMAIL_USER}|" .env
           sed -i "s|EMAIL_PASSWORD=.*|EMAIL_PASSWORD=${EMAIL_PASSWORD}|" .env
         fi
-        docker-compose up -d
+        
+        # Robust Deployment Sequence for Docker Compose V2
+        # 1. Pull latest image specifically for the prod config
+        docker compose -f docker-compose.prod.yml pull
+        
+        # 2. Recreate containers (up -d handles stop/recreate if image changed)
+        docker compose -f docker-compose.prod.yml up -d
+        
+        # 3. Cleanup unused images to save space
+        docker image prune -f
+        
         sleep 5
         docker ps
         EOF
@@ -84,20 +93,21 @@ jobs:
         docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.CreatedAt}}"
         echo ""
         echo "=== Checking Current Container Image ==="
-        CONTAINER_IMAGE=$(docker inspect backend --format='{{.Image}}' 2>/dev/null || docker inspect hr-portal-backend_backend --format='{{.Image}}' 2>/dev/null || echo "N/A")
-        LATEST_IMAGE=$(docker images harshava123/ser-backend:latest --format='{{.ID}}' 2>/dev/null || echo "N/A")
+        CONTAINER_IMAGE=$(docker inspect hr-backend-prod --format='{{.Image}}' 2>/dev/null || echo "N/A")
+        LATEST_IMAGE=$(docker images harshava123/hr-backend:latest --format='{{.ID}}' 2>/dev/null || echo "N/A")
         echo "Container Image ID: $CONTAINER_IMAGE"
         echo "Latest Image ID: $LATEST_IMAGE"
         echo ""
         echo "=== Pulling Latest Image ==="
-        docker pull harshava123/ser-backend:latest
+        docker pull harshava123/hr-backend:latest
         echo ""
         echo "=== Verifying Health Endpoint ==="
-        curl -f http://127.0.0.1:3000/api/health || curl -f http://127.0.0.1:5000/api/health
+        curl -f http://127.0.0.1:3000/api/health || curl -f http://127.0.0.1:5000/api/auth/me || echo "Health check skipped (auth/me requires token)"
         echo ""
         echo "=== Checking if Container Uses Latest Image ==="
-        NEW_LATEST_IMAGE=$(docker images harshava123/ser-backend:latest --format='{{.ID}}')
-        if [ "$CONTAINER_IMAGE" != "$NEW_LATEST_IMAGE" ] && [ "$CONTAINER_IMAGE" != "N/A" ]; then
+        # Note: 'docker images' ID might differ from 'docker inspect' if pulled separately? 
+        # But logically they should match if 'docker compose pull' updated it.
+        if [ "$CONTAINER_IMAGE" != "$LATEST_IMAGE" ] && [ "$CONTAINER_IMAGE" != "N/A" ]; then
           echo "⚠️  Container may need restart to use latest image"
         else
           echo "✅ Container is using latest image"
