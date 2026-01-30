@@ -57,6 +57,7 @@ jobs:
         set -e
         cd /data/backend
         
+        
         # Update .env with email credentials
         if ! grep -q "EMAIL_USER" .env 2>/dev/null; then
           echo "" >> .env
@@ -67,6 +68,34 @@ jobs:
           sed -i "s|EMAIL_USER=.*|EMAIL_USER=${EMAIL_USER}|" .env
           sed -i "s|EMAIL_PASSWORD=.*|EMAIL_PASSWORD=${EMAIL_PASSWORD}|" .env
         fi
+        
+        # Create/Update docker-compose.prod.yml on the server
+        cat << 'DC' > docker-compose.prod.yml
+        version: '3.8'
+
+        services:
+          # Backend API Service
+          # Note: MongoDB is installed on the server (not in Docker)
+          # Using host network mode to access MongoDB on localhost:27017
+          backend:
+            # Image from Docker Hub
+            image: harshava123/hr-backend:latest
+            container_name: hr-backend-prod
+            restart: unless-stopped
+            network_mode: host
+            environment:
+              - NODE_ENV=production
+              - MONGODB_URI=${MONGODB_URI}
+              - PORT=5000
+              - JWT_SECRET=${JWT_SECRET}
+              - FRONTEND_URL=${FRONTEND_URL}
+              - EMAIL_USER=${EMAIL_USER}
+              - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+            volumes:
+              - ./logs:/app/logs
+        DC
+        # Fix indentation (strip leading 8 spaces from workflow indentation)
+        sed -i 's/^        //' docker-compose.prod.yml
         
         # Robust Deployment Sequence for Docker Compose V2
         # 1. Pull latest image specifically for the prod config
