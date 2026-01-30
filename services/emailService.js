@@ -96,7 +96,7 @@ const createTimesheetNotificationTemplate = (data) => {
   // Group entries by charge code/project
   const groupedRows = {}
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  
+
   if (entries && entries.length > 0) {
     entries.forEach(entry => {
       const key = `${entry.projectId || 'unknown'}-${entry.chargeCode || 'General'}`
@@ -107,11 +107,11 @@ const createTimesheetNotificationTemplate = (data) => {
           totalHours: 0
         }
       }
-      
+
       // Find day index (Mon=0, Tue=1, etc.)
       const entryDate = new Date(entry.date)
       const dayIndex = (entryDate.getDay() + 6) % 7 // Convert Sun=0 to Mon=0
-      
+
       if (dayIndex >= 0 && dayIndex < 7) {
         groupedRows[key].dailyHours[dayIndex] = entry.hoursCompleted || entry.totalDailyHours || '0 : 00'
       }
@@ -173,7 +173,7 @@ const createTimesheetNotificationTemplate = (data) => {
       const display = hours === 'WO' ? 'WO' : hours === 'FL' ? 'FL' : hours
       return `<td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${display}</td>`
     }).join('')
-    
+
     return `
       <tr>
         <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; width: 200px;">${row.chargeCode}</td>
@@ -188,7 +188,7 @@ const createTimesheetNotificationTemplate = (data) => {
     const display = formatDuration(total)
     return `<td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #f3f4f6;">${display}</td>`
   }).join('')
-  
+
   const grandTotalMins = dailyTotals.reduce((acc, val) => acc + val, 0)
   const grandTotalHtml = `<td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #e5e7eb;">${formatDuration(grandTotalMins)}</td>`
 
@@ -554,3 +554,98 @@ export const sendPasswordResetEmail = async (email, resetUrl) => {
   }
 }
 
+
+// Send grievance notification email
+export const sendGrievanceNotificationEmail = async (data) => {
+  const { recipientEmail, recipientName, senderName, issueType, subject, description, grievanceId } = data
+
+  console.log('📧 [EMAIL SERVICE] Sending grievance notification to:', recipientEmail)
+
+  try {
+    const transporter = createTransporter()
+
+    // Determine sender
+    const sendGridApiKey = process.env.SENDGRID_API_KEY
+    const emailUser = sendGridApiKey
+      ? (process.env.SENDGRID_FROM_EMAIL || 'noreply@artihcus.com')
+      : (process.env.EMAIL_USER || 'Artihcusweb@gmail.com')
+
+    const dashboardUrl = `${FRONTEND_URL}/grievance`
+
+    const emailHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9; }
+          .content { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+          .header { border-bottom: 2px solid #6366f1; padding-bottom: 15px; margin-bottom: 20px; }
+          .header h2 { color: #6366f1; margin: 0; }
+          .info-item { margin-bottom: 15px; }
+          .label { font-weight: bold; color: #555; display: block; margin-bottom: 5px; }
+          .value { background-color: #f3f4f6; padding: 8px 12px; border-radius: 4px; border: 1px solid #e5e7eb; }
+          .description { background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; }
+          .button { display: inline-block; padding: 12px 24px; background-color: #6366f1; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center; }
+          .footer { margin-top: 30px; font-size: 12px; color: #888; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="content">
+            <div class="header">
+              <h2>New Grievance Assigned</h2>
+            </div>
+            
+            <p>Hello <strong>${recipientName}</strong>,</p>
+            <p>A new grievance has been raised that falls under your assigned category.</p>
+
+            <div class="info-item">
+              <span class="label">Issue Type</span>
+              <div class="value">${issueType}</div>
+            </div>
+
+            <div class="info-item">
+              <span class="label">Raised By</span>
+              <div class="value">${senderName}</div>
+            </div>
+
+            <div class="info-item">
+              <span class="label">Subject</span>
+              <div class="value">${subject}</div>
+            </div>
+
+            <div class="description">
+              <span class="label" style="color:#991b1b;">Description:</span>
+              <p style="margin: 5px 0 0 0;">${description}</p>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px;">
+              <a href="${dashboardUrl}" class="button">View & Manage Grievance</a>
+            </div>
+          </div>
+          
+          <div class="footer">
+            <p>This is an automated notification from the HR Portal.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+
+    const mailOptions = {
+      from: `HR Portal System <${emailUser}>`,
+      to: recipientEmail,
+      subject: `[New Grievance] ${issueType}: ${subject}`,
+      html: emailHtml
+    }
+
+    await transporter.sendMail(mailOptions)
+    console.log(`✅ [EMAIL SERVICE] Grievance email sent to ${recipientEmail}`)
+    return true
+
+  } catch (error) {
+    console.error(`❌ [EMAIL SERVICE] Failed to send grievance email to ${recipientEmail}:`, error.message)
+    return false
+  }
+}

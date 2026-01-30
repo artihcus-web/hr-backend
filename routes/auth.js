@@ -348,7 +348,31 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
 router.get('/users', authenticate, requireRole('admin', 'c-suite'), async (_req, res) => {
   try {
     const users = await User.find().select('-password')
-    res.json({ users })
+
+    // Fetch all active projects to map valid current assignments
+    const activeProjects = await Project.find({ status: { $in: ['active', 'In Progress'] } }).select('projectName employees projectManagers')
+
+    const usersWithAssignments = users.map(user => {
+      const u = user.toObject()
+      // Skip for admins to check efficiently
+      if (u.role === 'admin') return u
+
+      u.currentAssignments = activeProjects.reduce((acc, p) => {
+        const isManager = p.projectManagers.some(id => id.toString() === user._id.toString())
+        const isEmployee = p.employees.some(id => id.toString() === user._id.toString())
+
+        if (isManager || isEmployee) {
+          acc.push({
+            projectName: p.projectName,
+            role: isManager ? 'Manager' : 'Member'
+          })
+        }
+        return acc
+      }, [])
+      return u
+    })
+
+    res.json({ users: usersWithAssignments })
   } catch (error) {
     console.error('List users error:', error)
     res.status(500).json({ message: 'Server error while listing users' })

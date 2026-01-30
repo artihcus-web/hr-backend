@@ -95,14 +95,14 @@ router.get('/:id/available-users', authenticate, requireRole('admin'), async (re
       return res.status(404).json({ message: 'Project not found' })
     }
 
-    // Build exclusion query
-    let exclusionQuery = { $nin: project.employees }
+    // Build exclusion query: Exclude users who are already in the project (either as employee or manager)
+    let excludedIds = [...project.employees, ...project.projectManagers]
 
-    // If unassignedOnly is true, verify user is NOT in ANY other active project
+    // If unassignedOnly is true, also exclude users assigned to OTHER active projects
     if (unassignedOnly === 'true') {
       const allProjects = await Project.find({ status: 'active' }, 'employees projectName')
       const allAssignedEmployeeIds = allProjects.reduce((acc, p) => {
-        // Exclude current project employees from this reduction check (handled by base exclusion)
+        // Exclude current project employees from this reduction check (handled above)
         // Also exclude "Ready-to-deploy resources" from being considered an "active assignment" preventing other assignments
         if (p._id.toString() !== req.params.id && p.projectName !== 'Ready-to-deploy resources') {
           return [...acc, ...p.employees]
@@ -110,28 +110,37 @@ router.get('/:id/available-users', authenticate, requireRole('admin'), async (re
         return acc
       }, [])
 
-      // Combine exclusion: Not in current project AND Not in any other active project
-      exclusionQuery = {
-        $nin: [...project.employees, ...allAssignedEmployeeIds]
-      }
+      excludedIds = [...excludedIds, ...allAssignedEmployeeIds]
     }
 
-    // Get all employees (excluding admin)
-    const employees = await User.find({
-      role: { $in: ['employee', 'tl'] },
-      _id: exclusionQuery
+    // Get all potential users (everyone except admin)
+    const users = await User.find({
+      role: { $in: ['employee', 'tl', 'manager', 'hr', 'super_manager'] },
+      _id: { $nin: excludedIds }
     }).select('username fullName email employeeId role')
 
-    // Get all managers (and HRs if it's the specific project)
-    const isReadyToDeploy = project.projectName === 'Ready-to-deploy resources'
-    const managerRoles = isReadyToDeploy ? ['manager', 'hr'] : ['manager']
+    // Fetch all active projects to map valid current assignments
+    const activeProjects = await Project.find({ status: { $in: ['active', 'In Progress'] } }).select('projectName employees projectManagers')
 
-    const managers = await User.find({
-      role: { $in: managerRoles },
-      _id: { $nin: project.projectManagers }
-    }).select('username fullName email employeeId role')
+    const usersWithAssignments = users.map(user => {
+      const u = user.toObject()
+      u.currentAssignments = activeProjects.reduce((acc, p) => {
+        // Check if user is in this project
+        const isManager = p.projectManagers.some(id => id.toString() === user._id.toString())
+        const isEmployee = p.employees.some(id => id.toString() === user._id.toString())
 
-    res.json({ employees, managers })
+        if (isManager || isEmployee) {
+          acc.push({
+            projectName: p.projectName,
+            role: isManager ? 'Manager' : 'Member'
+          })
+        }
+        return acc
+      }, [])
+      return u
+    })
+
+    res.json({ users: usersWithAssignments })
   } catch (error) {
     console.error('Get available users error:', error)
     res.status(500).json({ message: 'Server error while fetching available users' })

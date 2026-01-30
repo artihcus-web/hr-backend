@@ -21,6 +21,7 @@ const app = express()
 // Use FRONTEND_URL env in production, fall back to common local/dev origins
 const defaultOrigins = [
   'https://hr.artihcus.com',
+  'https://ticket.artihcus.com',
   'https://fer-henna-omega.vercel.app',
   'http://localhost:5175',
   'http://localhost:5173',

@@ -70,6 +70,27 @@ router.post('/', authenticate, async (req, res) => {
             target: grievance._id.toString()
         })
 
+        // 4. Send Email Notifications (Async - don't block response)
+        const populatedType = await GrievanceType.findById(issueTypeId).populate('assignedHrs', 'email fullName')
+
+        if (populatedType && populatedType.assignedHrs && populatedType.assignedHrs.length > 0) {
+            populatedType.assignedHrs.forEach(hr => {
+                if (hr.email) {
+                    import('../services/emailService.js').then(({ sendGrievanceNotificationEmail }) => {
+                        sendGrievanceNotificationEmail({
+                            recipientEmail: hr.email,
+                            recipientName: hr.fullName,
+                            senderName: req.user.fullName || req.user.username,
+                            issueType: issueType.name,
+                            subject: subject,
+                            description: description,
+                            grievanceId: grievance._id
+                        }).catch(err => console.error('Email send failed async:', err))
+                    })
+                }
+            })
+        }
+
         res.status(201).json({ message: 'Grievance submitted successfully', grievance })
     } catch (error) {
         console.error('Create grievance error:', error)
