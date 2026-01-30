@@ -557,7 +557,7 @@ export const sendPasswordResetEmail = async (email, resetUrl) => {
 
 // Send grievance notification email
 export const sendGrievanceNotificationEmail = async (data) => {
-  const { recipientEmail, recipientName, senderName, issueType, subject, description, grievanceId } = data
+  const { recipientEmail, recipientName, senderName, issueType, subject, description } = data
 
   console.log('📧 [EMAIL SERVICE] Sending grievance notification to:', recipientEmail)
 

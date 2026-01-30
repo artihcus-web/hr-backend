@@ -1,7 +1,7 @@
 import express from 'express'
 import Grievance from '../models/Grievance.js'
 import GrievanceType from '../models/GrievanceType.js'
-import User from '../models/User.js'
+
 import ActivityLog from '../models/ActivityLog.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 

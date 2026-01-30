@@ -171,6 +171,36 @@ router.post('/', authenticate, requireRole('admin'), async (req, res) => {
       createdBy: req.user._id
     })
 
+    // Handle Client Creation/Linking
+    if (req.body.clientsData && Array.isArray(req.body.clientsData)) {
+      const clientIds = []
+
+      for (const clientData of req.body.clientsData) {
+        if (!clientData.email || !clientData.password) continue
+
+        let user = await User.findOne({ email: clientData.email.toLowerCase() })
+
+        if (!user) {
+          // Create new client user
+          user = new User({
+            username: clientData.email.split('@')[0],
+            email: clientData.email.toLowerCase(),
+            password: clientData.password,
+            fullName: clientData.name || clientData.email.split('@')[0],
+            role: 'client',
+            firstName: (clientData.name || '').split(' ')[0] || 'Client',
+            employeeId: 'CL-' + Math.floor(1000 + Math.random() * 9000) // Temp ID generation
+          })
+          await user.save()
+        } else {
+          // Ensure role is client if linking existing user? 
+          // Maybe safe to just use existing user ID.
+        }
+        clientIds.push(user._id)
+      }
+      project.clients = clientIds
+    }
+
     await project.save()
 
     // Log Activity
@@ -217,6 +247,47 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
     if (description !== undefined) project.description = description
     if (status) project.status = status
     if (shiftTiming) project.shiftTiming = shiftTiming
+
+    // Handle Client Updates
+    if (req.body.clientsData && Array.isArray(req.body.clientsData)) {
+      // If clientsData is provided, we process it. 
+      // Note: This logic REPLACES the client list with the valid ones from this list.
+      // If you want to Append, you'd need to fetch existing and concat.
+      // Current Assumption: Form sends FULL list of desired clients.
+
+      const clientIds = []
+
+      for (const clientData of req.body.clientsData) {
+        // If it has an _id, it's an existing linked user
+        if (clientData._id) {
+          clientIds.push(clientData._id)
+          continue
+        }
+
+        // New or Existing by Email
+        if (!clientData.email) continue
+
+        let user = await User.findOne({ email: clientData.email.toLowerCase() })
+
+        if (!user) {
+          if (!clientData.password) continue // Can't create without password
+
+          // Create new client user
+          user = new User({
+            username: clientData.email.split('@')[0],
+            email: clientData.email.toLowerCase(),
+            password: clientData.password,
+            fullName: clientData.name || clientData.email.split('@')[0],
+            role: 'client',
+            firstName: (clientData.name || '').split(' ')[0] || 'Client',
+            employeeId: 'CL-' + Math.floor(1000 + Math.random() * 9000)
+          })
+          await user.save()
+        }
+        clientIds.push(user._id)
+      }
+      project.clients = clientIds
+    }
 
     // Update Team if provided
     // Note: This replaces the existing lists. 
