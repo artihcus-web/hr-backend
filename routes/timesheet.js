@@ -710,7 +710,17 @@ router.get('/pending', authenticate, async (req, res) => {
         const buEmployees = await User.find({ businessUnitHR: req.user.businessUnitHR }).select('_id');
         buEmployeeIds = buEmployees.map(u => u._id);
         console.log(`📋 [TIMESHEET] BU Employees count: ${buEmployeeIds.length}`)
+        console.log(`🔍 [DEBUG] BU Employee IDs:`, buEmployeeIds)
       }
+
+      console.log('🔍 [DEBUG] Construction Checks:')
+      console.log(' - User:', req.user.email, req.user.role)
+      console.log(' - BU:', req.user.businessUnitHR)
+      console.log(' - Projects:', projectIds.length)
+      console.log(' - Benches:', benchEmployeeIds.length)
+      console.log(' - Mapped:', mappedEmployeeIds.length)
+      console.log(' - Direct:', directReportIds.length)
+      console.log(' - BU Emps:', buEmployeeIds.length)
 
       if (projectIds.length === 0 && benchEmployeeIds.length === 0 && mappedEmployeeIds.length === 0 && directReportIds.length === 0 && buEmployeeIds.length === 0) {
         console.log('📋 [TIMESHEET] User manages no projects, benches, mapped employees, direct reports, or BU employees. Returning empty list.')

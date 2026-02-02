@@ -156,7 +156,7 @@ router.post('/login', async (req, res) => {
     // Restriction: Clients must use the Ticket Portal
     if (user.role === 'client') {
       const origin = req.headers.origin || ''
-      const allowedClientOrigins = ['https://ticket.artihcus.com', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
+
 
       // If the origin is the HR Portal (Production OR Localhost for testing), block them
       if (origin.includes('hr.artihcus.com') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
