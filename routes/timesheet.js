@@ -169,9 +169,9 @@ router.post('/submit', authenticate, async (req, res) => {
       ]
     }).populate('projectManagers', 'email fullName username')
 
-    if (projects.length === 0) {
-      return res.status(400).json({ message: 'You are not assigned to any projects' })
-    }
+    // if (projects.length === 0) {
+    //   return res.status(400).json({ message: 'You are not assigned to any projects' })
+    // }
 
     // Get unique project managers from all assigned projects
     console.log('📋 [TIMESHEET] Finding project managers...')
@@ -285,8 +285,25 @@ router.post('/submit', authenticate, async (req, res) => {
     }
 
     if (allManagers.length === 0) {
-      console.error('❌ [TIMESHEET] No managers found!')
-      return res.status(400).json({ message: 'No project managers or HR managers found for this employee' })
+      console.log('⚠️ [TIMESHEET] No managers found. Defaulting to Admin.')
+      const admins = await User.find({ role: 'admin' }).select('email fullName username')
+
+      if (admins.length > 0) {
+        admins.forEach(admin => {
+          // Avoid duplicates if admin happens to be in the list already (unlikely if list is 0, but good practice)
+          if (!allManagers.some(m => m.email === admin.email)) {
+            allManagers.push({
+              email: admin.email,
+              name: admin.fullName || admin.username,
+              role: 'Admin (Fallback)'
+            })
+            console.log('✅ [TIMESHEET] Added Admin to notification list:', admin.email)
+          }
+        })
+      } else {
+        console.error('❌ [TIMESHEET] No managers AND No Admins found!')
+        return res.status(400).json({ message: 'No managers or admins found to notify.' })
+      }
     }
 
     console.log('📋 [TIMESHEET] All managers to notify:', allManagers.length)
