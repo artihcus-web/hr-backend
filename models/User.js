@@ -100,6 +100,11 @@ const userSchema = new mongoose.Schema({
   grade: String,
   location: String,
   employeeNumberSeries: String,
+  businessUnitHR: {
+    type: String,
+    enum: ['BU1', 'BU2', 'BU3'],
+    default: null
+  },
 
   // Professional Information
   education: [{

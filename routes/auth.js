@@ -158,10 +158,10 @@ router.post('/login', async (req, res) => {
       const origin = req.headers.origin || ''
       const allowedClientOrigins = ['https://ticket.artihcus.com', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
 
-      // If the origin is the HR Portal, block them
-      if (origin.includes('hr.artihcus.com')) {
+      // If the origin is the HR Portal (Production OR Localhost for testing), block them
+      if (origin.includes('hr.artihcus.com') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
         return res.status(403).json({
-          message: 'Access Denied: Please login via the Client Portal (ticket.artihcus.com).'
+          message: 'Access Denied: Please login via the Client Portal.'
         })
       }
     }

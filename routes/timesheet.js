@@ -249,6 +249,30 @@ router.post('/submit', authenticate, async (req, res) => {
       })
     }
 
+    // 3. Check for specific Business Unit HR assignment (from User Profile)
+    // This handles cases where an employee is on the bench but assigned to a specific BU HR
+    if (req.user.businessUnitHR) {
+      console.log(`📋 [TIMESHEET] Finding HR for Business Unit: ${req.user.businessUnitHR}`)
+      // Find HR/Admins tagged with this BU
+      const buHrs = await User.find({
+        role: { $in: ['hr', 'admin', 'supermanager', 'manager'] },
+        businessUnitHR: req.user.businessUnitHR,
+        _id: { $ne: employeeId } // Don't send to self
+      }).select('email fullName username')
+
+      buHrs.forEach(hr => {
+        if (hr.email && !hrManagers.find(existing => existing.email === hr.email)) {
+          hrManagers.push({
+            email: hr.email,
+            name: hr.fullName || hr.username,
+            benchId: null,
+            benchName: `BU: ${req.user.businessUnitHR}`
+          })
+          console.log(`✅ [TIMESHEET] Added BU HR: ${hr.email} for ${req.user.businessUnitHR}`)
+        }
+      })
+    }
+
     console.log('📋 [TIMESHEET] Total HR managers found:', hrManagers.length)
 
     // Find Direct Manager (Superior)
@@ -679,12 +703,22 @@ router.get('/pending', authenticate, async (req, res) => {
       const directReportIds = directReportEmployees.map(u => u._id)
       console.log(`📋 [TIMESHEET] Direct Report Employees (User.managerId) count: ${directReportIds.length}`)
 
-      if (projectIds.length === 0 && benchEmployeeIds.length === 0 && mappedEmployeeIds.length === 0 && directReportIds.length === 0) {
-        console.log('📋 [TIMESHEET] User manages no projects, benches, mapped employees, or direct reports. Returning empty list.')
+      // 5. Find employees belonging to the same Business Unit HR (if user is a BU HR)
+      let buEmployeeIds = [];
+      if (req.user.businessUnitHR) {
+        console.log(`📋 [TIMESHEET] Fetching employees for Business Unit: ${req.user.businessUnitHR}`)
+        const buEmployees = await User.find({ businessUnitHR: req.user.businessUnitHR }).select('_id');
+        buEmployeeIds = buEmployees.map(u => u._id);
+        console.log(`📋 [TIMESHEET] BU Employees count: ${buEmployeeIds.length}`)
+      }
+
+      if (projectIds.length === 0 && benchEmployeeIds.length === 0 && mappedEmployeeIds.length === 0 && directReportIds.length === 0 && buEmployeeIds.length === 0) {
+        console.log('📋 [TIMESHEET] User manages no projects, benches, mapped employees, direct reports, or BU employees. Returning empty list.')
         console.log(`   - Projects: ${projectIds.length}`)
         console.log(`   - Benches: ${benchEmployeeIds.length}`)
         console.log(`   - Mapped: ${mappedEmployeeIds.length}`)
         console.log(`   - Direct: ${directReportIds.length}`)
+        console.log(`   - BU HR: ${buEmployeeIds.length}`)
         return res.json({ timesheets: [] })
       }
 
@@ -705,6 +739,9 @@ router.get('/pending', authenticate, async (req, res) => {
       }
       if (directReportIds.length > 0) {
         query.$or.push({ employeeId: { $in: directReportIds } })
+      }
+      if (buEmployeeIds.length > 0) {
+        query.$or.push({ employeeId: { $in: buEmployeeIds } })
       }
 
       console.log('🔍 [DEBUG] Final Query $or condition:', JSON.stringify(query.$or, null, 2))

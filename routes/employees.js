@@ -46,4 +46,23 @@ router.get('/:id', async (req, res) => {
     }
 })
 
+// Update Employee Assigned HR (Business Unit)
+router.put('/:id/assign-hr', async (req, res) => {
+    try {
+        const { businessUnitHR } = req.body
+        const employee = await User.findByIdAndUpdate(
+            req.params.id,
+            { businessUnitHR },
+            { new: true }
+        ).select('fullName businessUnitHR')
+
+        if (!employee) return res.status(404).json({ message: 'Employee not found' })
+
+        res.json({ message: 'HR Assigned successfully', employee })
+    } catch (error) {
+        console.error('Update HR error:', error)
+        res.status(500).json({ message: 'Server error while assigning HR' })
+    }
+})
+
 export default router
