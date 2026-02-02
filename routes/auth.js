@@ -153,6 +153,19 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
+    // Restriction: Clients must use the Ticket Portal
+    if (user.role === 'client') {
+      const origin = req.headers.origin || ''
+      const allowedClientOrigins = ['https://ticket.artihcus.com', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000']
+
+      // If the origin is the HR Portal, block them
+      if (origin.includes('hr.artihcus.com')) {
+        return res.status(403).json({
+          message: 'Access Denied: Please login via the Client Portal (ticket.artihcus.com).'
+        })
+      }
+    }
+
     const token = jwt.sign(
       { userId: user._id, username: user.username, role: user.role },
       JWT_SECRET,
