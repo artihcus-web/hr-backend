@@ -17,7 +17,6 @@ dotenv.config()
 
 const app = express()
 
-// Middleware - CORS configuration
 // Use FRONTEND_URL env in production, fall back to common local/dev origins
 const defaultOrigins = [
   'https://hr.artihcus.com',
@@ -51,7 +50,7 @@ app.use(cors({
     const normalizedAllowedOrigins = allowedOrigins.map(o => o.replace(/\/$/, ''))
 
     if (normalizedAllowedOrigins.includes(normalizedOrigin) || normalizedAllowedOrigins.includes('*')) {
-      // Return the original origin (not normalized) to set the header correctly
+      console.log(`✅ CORS allowed: ${origin}`)
       callback(null, origin)
     } else {
       console.log(`❌ CORS blocked origin: ${origin}`)
@@ -61,14 +60,12 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Type', 'Authorization'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }))
 
-// Explicitly handle OPTIONS requests for preflight
+// Explicitly handle preflight for all routes
 app.options('*', cors())
+
 app.use(express.json())
 
 // Routes
@@ -93,6 +90,11 @@ app.get('/api/health', (_req, res) => {
     lastUpdated: '2026-01-09',
     buildTrigger: 'Force fresh build - no cache'
   })
+})
+
+// Root route for base URL check
+app.get('/', (_req, res) => {
+  res.send('API is running...')
 })
 
 // MongoDB connection
