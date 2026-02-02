@@ -14,6 +14,7 @@ router.get('/', async (req, res) => {
       .populate('createdBy', 'username fullName')
       .populate('employees', 'username fullName email employeeId')
       .populate('projectManagers', 'username fullName email employeeId')
+      .populate('clients', 'username fullName email employeeId')
       .populate({
         path: 'managerAssignments.employee',
         select: 'username fullName email employeeId'
@@ -45,6 +46,7 @@ router.get('/my-projects', authenticate, async (req, res) => {
       .populate('createdBy', 'username fullName')
       .populate('employees', 'username fullName email employeeId')
       .populate('projectManagers', 'username fullName email employeeId')
+      .populate('clients', 'username fullName email employeeId')
       .populate({
         path: 'managerAssignments.employee',
         select: 'username fullName email employeeId'
@@ -68,6 +70,7 @@ router.get('/:id', async (req, res) => {
       .populate('createdBy', 'username fullName')
       .populate('employees', 'username fullName email employeeId')
       .populate('projectManagers', 'username fullName email employeeId')
+      .populate('clients', 'username fullName email employeeId')
       .populate({
         path: 'managerAssignments.employee',
         select: 'username fullName email employeeId'

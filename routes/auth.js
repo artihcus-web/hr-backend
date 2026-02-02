@@ -153,6 +153,13 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
+    // Restriction: Clients connect via a separate portal
+    if (user.role === 'client') {
+      return res.status(403).json({
+        message: 'Access Denied: Clients must login via the Client Portal.'
+      })
+    }
+
     const token = jwt.sign(
       { userId: user._id, username: user.username, role: user.role },
       JWT_SECRET,
