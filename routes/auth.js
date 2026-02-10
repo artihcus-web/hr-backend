@@ -16,7 +16,7 @@ router.post('/forgot-password', async (req, res) => {
     const { email } = req.body
     if (!email) return res.status(400).json({ message: 'Email is required' })
 
-    const user = await User.findOne({ email: email.toLowerCase() })
+    const user = await User.findOne({ officialEmail: email.toLowerCase() })
     if (!user) {
       // Security: Don't reveal if user exists
       return res.status(200).json({ message: 'If an account exists, a reset email has been sent.' })
@@ -36,8 +36,8 @@ router.post('/forgot-password', async (req, res) => {
     const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173'
     const resetUrl = `${frontendUrl}/reset-password?token=${token}`
 
-    // Send email
-    const emailSent = await sendPasswordResetEmail(user.email, resetUrl)
+    // Send email to official email
+    const emailSent = await sendPasswordResetEmail(user.officialEmail, resetUrl)
 
     if (emailSent) {
       res.json({ message: 'If an account exists, a reset email has been sent.' })
@@ -140,9 +140,9 @@ router.post('/login', async (req, res) => {
 
     const identifier = username.trim()
 
-    // Allow login with either employeeId or email, using the same input field
+    // Allow login with either employeeId or officialEmail, using the same input field
     const user = await User.findOne({
-      $or: [{ employeeId: identifier }, { email: identifier.toLowerCase() }]
+      $or: [{ employeeId: identifier }, { officialEmail: identifier.toLowerCase() }]
     })
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' })
@@ -221,12 +221,12 @@ router.get('/me', authenticate, async (req, res) => {
 // Admin: create users with specific roles
 router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
   try {
-    const { firstName, email, phone, employeeId, role = 'employee', password, username, loginUsername, fullName, lastName, assignedProjects, ...otherFields } = req.body
+    const { firstName, email, phone, employeeId, officialEmail, role = 'employee', password, username, loginUsername, fullName, lastName, assignedProjects, ...otherFields } = req.body
 
     // Validate required fields (password is optional, defaults to employeeId)
-    if (!firstName || !email || !phone || !employeeId || !role) {
+    if (!firstName || !phone || !employeeId || !role || !officialEmail) {
       return res.status(400).json({
-        message: 'firstName, email, phone, employeeId, and role are required'
+        message: 'firstName, phone, employeeId, officialEmail, and role are required'
       })
     }
 
@@ -237,7 +237,7 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
     }
 
     // Generate username if not provided
-    const finalUsername = username || loginUsername || employeeId || email.split('@')[0]
+    const finalUsername = username || loginUsername || employeeId || officialEmail.split('@')[0]
 
     // Generate fullName if not provided
     const finalFullName = fullName || `${firstName} ${lastName || ''}`.trim()
@@ -246,7 +246,7 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
     const existingUser = await User.findOne({
       $or: [
         { username: finalUsername },
-        { email: email.toLowerCase() },
+        { officialEmail: officialEmail.toLowerCase() },
         { employeeId: employeeId }
       ]
     })
@@ -254,7 +254,7 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
     if (existingUser) {
       let message = 'User already exists'
       if (existingUser.username === finalUsername) message = 'Username already exists'
-      else if (existingUser.email === email.toLowerCase()) message = 'Email already exists'
+      else if (existingUser.officialEmail === officialEmail.toLowerCase()) message = 'Official Email already exists'
       else if (existingUser.employeeId === employeeId) message = 'Employee ID already exists'
 
       return res.status(400).json({ message })
@@ -283,7 +283,8 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
     // Build user data object
     const userData = {
       username: finalUsername,
-      email: email.toLowerCase(),
+      officialEmail: officialEmail.toLowerCase(),
+      email: email ? email.toLowerCase() : undefined,
       password: finalPassword,
       role,
       fullName: finalFullName,
@@ -409,7 +410,7 @@ router.get('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
 // Admin: update user
 router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) => {
   try {
-    const { firstName, email, phone, employeeId, role, password, username, loginUsername, fullName, lastName, middleName, isActive, assignedProjects, ...otherFields } = req.body
+    const { firstName, email, phone, employeeId, officialEmail, role, password, username, loginUsername, fullName, lastName, middleName, isActive, assignedProjects, ...otherFields } = req.body
 
     const user = await User.findById(req.params.id)
     if (!user) {
@@ -442,12 +443,13 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
     if (firstName) updateData.firstName = firstName
     if (lastName !== undefined) updateData.lastName = lastName
     if (middleName !== undefined) updateData.middleName = middleName
-    if (email) updateData.email = email.toLowerCase()
+    if (email !== undefined) updateData.email = email ? email.toLowerCase() : undefined
+    if (officialEmail) updateData.officialEmail = officialEmail.toLowerCase()
     if (phone) updateData.phone = phone
     if (employeeId) updateData.employeeId = employeeId
     if (role) updateData.role = role
     if (fullName) updateData.fullName = fullName
-    if (username || loginUsername) updateData.username = username || loginUsername || employeeId || email?.split('@')[0]
+    if (username || loginUsername) updateData.username = username || loginUsername || employeeId || officialEmail?.split('@')[0]
     if (password) updateData.password = password // Will be hashed by pre-save hook
     if (isActive !== undefined) updateData.isActive = isActive
     if (assignedProjects !== undefined) updateData.assignedProjects = assignedProjects

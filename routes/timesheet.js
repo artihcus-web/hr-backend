@@ -467,17 +467,17 @@ router.post('/submit', authenticate, async (req, res) => {
     });
 
     // Add Direct Manager
-    if (directManager && !finalNotifyList.some(x => x.email === directManager.email)) {
-      finalNotifyList.push({ ...directManager, role: 'Reporting Manager' });
+    if (directManager && !finalNotifyList.some(x => x.email === directManager.officialEmail)) {
+      finalNotifyList.push({ ...directManager, email: directManager.officialEmail, role: 'Reporting Manager' });
     }
 
     // Add HR Managers (Logic remains similar: from Ready-to-deploy or specific assignment)
     // Reuse existing 'hrManagers' from previous code block (lines 198-241 logic needs to be preserved or moved)
     // ... [assuming hrManagers array is populated as before] ...
     hrManagers.forEach(hr => {
-      if (hr.email && !finalNotifyList.some(x => x.email === hr.email)) {
+      if (hr.officialEmail && !finalNotifyList.some(x => x.email === hr.officialEmail)) {
         finalNotifyList.push({
-          email: hr.email,
+          email: hr.officialEmail,
           name: hr.name,
           role: 'HR Manager',
           project: hr.benchName
@@ -780,9 +780,10 @@ router.put('/:id/status', authenticate, async (req, res) => {
     const userId = req.user._id
 
     // Normalize legacy "rejected" into "rejected-edit" so employees can edit/resubmit
-    const normalizedStatus = status === 'rejected' ? 'rejected-edit' : status
+    let normalizedStatus = status === 'rejected' ? 'rejected-edit' : status
+    if (normalizedStatus === 'approved') normalizedStatus = 'Approved'
 
-    if (!['approved', 'on-hold', 'rejected-edit'].includes(normalizedStatus)) {
+    if (!['approved', 'Approved', 'on-hold', 'rejected-edit'].includes(normalizedStatus)) {
       return res.status(400).json({ message: 'Invalid status. Must be approved, rejected-edit, or on-hold.' })
     }
 

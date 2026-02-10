@@ -9,6 +9,7 @@ import benchRoutes from './routes/benches.js'
 import employeeRoutes from './routes/employees.js'
 import activityRoutes from './routes/activity.js'
 import grievanceRoutes from './routes/grievance.js'
+import formConfigRoutes from './routes/formConfig.js'
 import User from './models/User.js'
 
 // CI/CD auto-deployment: Builds Docker image, pushes to Docker Hub, deploys to server
@@ -76,6 +77,7 @@ app.use('/api/benches', benchRoutes)
 app.use('/api/employees', employeeRoutes)
 app.use('/api/activity', activityRoutes)
 app.use('/api/grievance', grievanceRoutes)
+app.use('/api/form-config', formConfigRoutes)
 
 // Health check route
 app.get('/api/health', (_req, res) => {

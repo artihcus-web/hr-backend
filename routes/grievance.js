@@ -71,14 +71,14 @@ router.post('/', authenticate, async (req, res) => {
         })
 
         // 4. Send Email Notifications (Async - don't block response)
-        const populatedType = await GrievanceType.findById(issueTypeId).populate('assignedHrs', 'email fullName')
+        const populatedType = await GrievanceType.findById(issueTypeId).populate('assignedHrs', 'officialEmail fullName')
 
         if (populatedType && populatedType.assignedHrs && populatedType.assignedHrs.length > 0) {
             populatedType.assignedHrs.forEach(hr => {
-                if (hr.email) {
+                if (hr.officialEmail) {
                     import('../services/emailService.js').then(({ sendGrievanceNotificationEmail }) => {
                         sendGrievanceNotificationEmail({
-                            recipientEmail: hr.email,
+                            recipientEmail: hr.officialEmail,
                             recipientName: hr.fullName,
                             senderName: req.user.fullName || req.user.username,
                             issueType: issueType.name,
