@@ -72,6 +72,7 @@ const userSchema = new mongoose.Schema({
   maritalStatus: String,
   bloodGroup: String,
   emergencyContact: String,
+  emergencyCountryCode: { type: String, default: '+91' },
 
   // Addresses (Structured)
   presentAddress: { type: addressSchema, default: () => ({}) },
