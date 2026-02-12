@@ -303,6 +303,12 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
 
     const isDraft = draft === true || draft === 'true'
 
+    // Helper to safely trim values that might be numbers/other types (e.g. from Excel import)
+    const safeTrim = (value) => {
+      if (value === undefined || value === null) return ''
+      return String(value).trim()
+    }
+
     if (isDraft) {
       // Draft creation: only require firstName so user can save Basic Info first, then other sections
       if (!firstName || !firstName.trim()) {
@@ -317,9 +323,15 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
       }
     }
 
-    const finalPhone = phone && phone.trim() ? phone : (isDraft ? `0000000000` : null)
-    const finalEmployeeId = employeeId && employeeId.trim() ? employeeId : (isDraft ? `DRAFT-${Date.now()}` : null)
-    const finalOfficialEmail = officialEmail && officialEmail.trim() ? officialEmail.toLowerCase() : (isDraft ? `draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@temp.local` : null)
+    const trimmedPhone = safeTrim(phone)
+    const trimmedEmployeeId = safeTrim(employeeId)
+    const trimmedOfficialEmail = safeTrim(officialEmail)
+
+    const finalPhone = trimmedPhone ? trimmedPhone : (isDraft ? `0000000000` : null)
+    const finalEmployeeId = trimmedEmployeeId ? trimmedEmployeeId : (isDraft ? `DRAFT-${Date.now()}` : null)
+    const finalOfficialEmail = trimmedOfficialEmail
+      ? trimmedOfficialEmail.toLowerCase()
+      : (isDraft ? `draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@temp.local` : null)
     const finalRole = role || 'employee'
 
     if (!isDraft && (!finalPhone || !finalEmployeeId || !finalOfficialEmail)) {

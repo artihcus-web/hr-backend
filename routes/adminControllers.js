@@ -17,7 +17,8 @@ router.get('/permissions', authenticate, requireRole('admin'), async (req, res) 
       employeeDirectory: { roles: ['hr'], users: [] },
       ticketConfiguration: { roles: ['hr'], users: [] },
       schemaConfiguration: { roles: ['hr'], users: [] },
-      grievancePortal: { roles: ['hr'], users: [] }
+      grievancePortal: { roles: ['hr'], users: [] },
+      policies: { roles: ['hr'], users: [] }
     }
 
     const permsMap = {}
@@ -50,7 +51,7 @@ router.put('/permissions', authenticate, requireRole('admin'), async (req, res) 
       return res.status(400).json({ message: 'Invalid permissions data' })
     }
 
-    const features = ['employeeDirectory', 'ticketConfiguration', 'schemaConfiguration', 'grievancePortal']
+    const features = ['employeeDirectory', 'ticketConfiguration', 'schemaConfiguration', 'grievancePortal', 'policies']
     
     for (const feature of features) {
       if (permissions[feature]) {
