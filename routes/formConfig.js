@@ -464,28 +464,38 @@ router.put('/type/:formType', authenticate, requireRole('admin', 'super_admin'),
             })
         }
 
-        // Update fields
-        if (formName !== undefined) config.formName = formName
-        if (description !== undefined) config.description = description
-        if (sections !== undefined) config.sections = sections
-        if (isActive !== undefined) config.isActive = isActive
+        // Update fields - use findOneAndUpdate to handle version conflicts atomically
+        const updateData = {
+            updatedBy: req.user._id,
+            $inc: { version: 1 }
+        }
+        
+        if (formName !== undefined) updateData.formName = formName
+        if (description !== undefined) updateData.description = description
+        if (sections !== undefined) updateData.sections = sections
+        if (isActive !== undefined) updateData.isActive = isActive
 
-        config.updatedBy = req.user._id
-        config.version += 1
+        const latestConfig = await FormConfig.findByIdAndUpdate(
+            config._id,
+            updateData,
+            { new: true, runValidators: true }
+        )
 
-        await config.save()
+        if (!latestConfig) {
+            return res.status(404).json({ error: 'Form configuration not found' })
+        }
 
         // Log activity
         await ActivityLog.create({
             user: req.user._id,
             action: 'FORM_CONFIG_UPDATED',
-            description: `Updated form configuration for ${config.formType}`,
-            target: config._id.toString()
+            description: `Updated form configuration for ${latestConfig.formType}`,
+            target: latestConfig._id.toString()
         })
 
         res.json({
             message: 'Form configuration updated successfully',
-            config
+            config: latestConfig
         })
     } catch (error) {
         console.error('Update config error:', error)
