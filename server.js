@@ -12,6 +12,7 @@ import grievanceRoutes from './routes/grievance.js'
 import formConfigRoutes from './routes/formConfig.js'
 import adminControllersRoutes from './routes/adminControllers.js'
 import User from './models/User.js'
+import policiesRoutes from './routes/policies.js'
 
 // CI/CD auto-deployment: Builds Docker image, pushes to Docker Hub, deploys to server
 // Last auto-deployed: SUCCESS! Heredoc with EOF - Auto-deployment fully working!
@@ -84,7 +85,7 @@ app.use('/api/activity', activityRoutes)
 app.use('/api/grievance', grievanceRoutes)
 app.use('/api/form-config', formConfigRoutes)
 app.use('/api/admin/controllers', adminControllersRoutes)
-
+app.use('/api/policies', policiesRoutes)
 // Health check route
 app.get('/api/health', (_req, res) => {
   res.json({

@@ -247,6 +247,55 @@ router.get('/me', authenticate, async (req, res) => {
   }
 })
 
+// Check uniqueness of employee fields
+router.post('/users/check-uniqueness', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const { field, value, excludeUserId } = req.body
+    
+    if (!field || value === undefined || value === null || value === '') {
+      return res.json({ isUnique: true })
+    }
+
+    // Fields that should be unique
+    const uniqueFields = [
+      'employeeId',
+      'phone',
+      'secondaryContact',
+      'email',
+      'alternativeEmail',
+      'officialEmail',
+      'accountNumber',
+      'aadharNumber',
+      'panNumber',
+      'passportNumber',
+      'drivingLicense',
+      'voterId',
+      'pfNumber',
+      'universalAccountNumber',
+      'esiNumber'
+    ]
+
+    if (!uniqueFields.includes(field)) {
+      return res.json({ isUnique: true })
+    }
+
+    const query = { [field]: value }
+    if (excludeUserId) {
+      query._id = { $ne: excludeUserId }
+    }
+
+    const existingUser = await User.findOne(query)
+    
+    res.json({ 
+      isUnique: !existingUser,
+      message: existingUser ? `${field} already exists` : null
+    })
+  } catch (error) {
+    console.error('Check uniqueness error:', error)
+    res.status(500).json({ message: 'Server error while checking uniqueness' })
+  }
+})
+
 // Admin: create users with specific roles (supports draft creation for section-by-section save)
 router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
   try {
@@ -307,6 +356,33 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
       else if (finalOfficialEmail && existingUser.officialEmail === finalOfficialEmail) message = 'Official Email already exists'
       else if (finalEmployeeId && existingUser.employeeId === finalEmployeeId) message = 'Employee ID already exists'
       return res.status(400).json({ message })
+    }
+
+    // Check uniqueness for other critical fields
+    const uniqueFields = [
+      { field: 'phone', value: finalPhone },
+      { field: 'secondaryContact', value: req.body.secondaryContact },
+      { field: 'email', value: req.body.email },
+      { field: 'alternativeEmail', value: req.body.alternativeEmail },
+      { field: 'accountNumber', value: req.body.accountNumber },
+      { field: 'aadharNumber', value: req.body.aadharNumber },
+      { field: 'panNumber', value: req.body.panNumber },
+      { field: 'passportNumber', value: req.body.passportNumber },
+      { field: 'drivingLicense', value: req.body.drivingLicense },
+      { field: 'voterId', value: req.body.voterId },
+      { field: 'pfNumber', value: req.body.pfNumber },
+      { field: 'universalAccountNumber', value: req.body.universalAccountNumber },
+      { field: 'esiNumber', value: req.body.esiNumber }
+    ]
+
+    for (const { field, value } of uniqueFields) {
+      if (value && String(value).trim() && !(field === 'phone' && finalPhone === '0000000000') && !(field === 'employeeId' && finalEmployeeId?.startsWith('DRAFT-'))) {
+        const existing = await User.findOne({ [field]: String(value).trim() })
+        if (existing) {
+          const fieldLabel = field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+          return res.status(400).json({ message: `${fieldLabel} already exists` })
+        }
+      }
     }
 
     // Helper function to convert date strings to Date objects
@@ -531,6 +607,39 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
     if (password) updateData.password = password // Will be hashed by pre-save hook
     if (isActive !== undefined) updateData.isActive = isActive
     if (assignedProjects !== undefined) updateData.assignedProjects = assignedProjects
+
+    // Check uniqueness for critical fields before updating
+    const uniqueFields = [
+      'employeeId',
+      'phone',
+      'secondaryContact',
+      'email',
+      'alternativeEmail',
+      'officialEmail',
+      'accountNumber',
+      'aadharNumber',
+      'panNumber',
+      'passportNumber',
+      'drivingLicense',
+      'voterId',
+      'pfNumber',
+      'universalAccountNumber',
+      'esiNumber'
+    ]
+
+    for (const field of uniqueFields) {
+      const value = updateData[field] || otherFields[field]
+      if (value && String(value).trim()) {
+        const existingUser = await User.findOne({
+          [field]: String(value).trim(),
+          _id: { $ne: req.params.id }
+        })
+        if (existingUser) {
+          const fieldLabel = field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+          return res.status(400).json({ message: `${fieldLabel} already exists` })
+        }
+      }
+    }
 
     // Add other fields
     Object.keys(otherFields).forEach(key => {
