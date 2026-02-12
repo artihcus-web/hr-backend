@@ -61,7 +61,8 @@ const userSchema = new mongoose.Schema({
   },
 
   // Basic Information
-  profileImage: String, // Base64 encoded image string (max 300KB recommended)
+  profileImage: String, // URL path to uploaded image (e.g. /uploads/profiles/xxx.jpg), max 1MB
+  profileImageOriginalName: String, // Original filename (for display only)
   firstName: String,
   middleName: String,
   lastName: String,

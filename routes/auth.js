@@ -1,4 +1,11 @@
 import express from 'express'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import fs from 'fs'
+import multer from 'multer'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 import jwt from 'jsonwebtoken'
 import User from '../models/User.js'
 import Project from '../models/Project.js'
@@ -6,6 +13,28 @@ import ActivityLog from '../models/ActivityLog.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import crypto from 'crypto'
 import { sendPasswordResetEmail } from '../services/emailService.js'
+
+const uploadsDir = path.join(__dirname, '..', 'uploads', 'profiles')
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true })
+}
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = (file.originalname && path.extname(file.originalname)) || (file.mimetype === 'image/png' ? '.png' : '.jpg')
+    const name = `${req.params.id}-${Date.now()}${ext}`
+    cb(null, name)
+  }
+})
+const upload = multer({
+  storage,
+  limits: { fileSize: 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['image/jpeg', 'image/png'].includes(file.mimetype)) return cb(null, true)
+    cb(new Error('Only JPEG and PNG are allowed'))
+  }
+})
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production'
@@ -218,45 +247,65 @@ router.get('/me', authenticate, async (req, res) => {
   }
 })
 
-// Admin: create users with specific roles
+// Admin: create users with specific roles (supports draft creation for section-by-section save)
 router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
   try {
-    const { firstName, email, phone, employeeId, officialEmail, role = 'employee', password, username, loginUsername, fullName, lastName, assignedProjects, ...otherFields } = req.body
+    const { firstName, email, phone, employeeId, officialEmail, role = 'employee', password, username, loginUsername, fullName, lastName, assignedProjects, draft, ...otherFields } = req.body
 
-    // Validate required fields (password is optional, defaults to employeeId)
-    if (!firstName || !phone || !employeeId || !role || !officialEmail) {
+    const isDraft = draft === true || draft === 'true'
+
+    if (isDraft) {
+      // Draft creation: only require firstName so user can save Basic Info first, then other sections
+      if (!firstName || !firstName.trim()) {
+        return res.status(400).json({ message: 'First Name is required' })
+      }
+    } else {
+      // Full creation: require all fields
+      if (!firstName || !phone || !employeeId || !role || !officialEmail) {
+        return res.status(400).json({
+          message: 'firstName, phone, employeeId, officialEmail, and role are required'
+        })
+      }
+    }
+
+    const finalPhone = phone && phone.trim() ? phone : (isDraft ? `0000000000` : null)
+    const finalEmployeeId = employeeId && employeeId.trim() ? employeeId : (isDraft ? `DRAFT-${Date.now()}` : null)
+    const finalOfficialEmail = officialEmail && officialEmail.trim() ? officialEmail.toLowerCase() : (isDraft ? `draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@temp.local` : null)
+    const finalRole = role || 'employee'
+
+    if (!isDraft && (!finalPhone || !finalEmployeeId || !finalOfficialEmail)) {
       return res.status(400).json({
         message: 'firstName, phone, employeeId, officialEmail, and role are required'
       })
     }
 
-    const finalPassword = password || employeeId
+    const finalPassword = password || (finalEmployeeId && finalEmployeeId.startsWith('DRAFT-') ? `Temp@${Date.now().toString().slice(-4)}` : finalEmployeeId)
 
-    if (!['admin', 'c-suite', 'hr', 'manager', 'supermanager', 'tl', 'employee', 'client'].includes(role)) {
+    if (!['admin', 'c-suite', 'hr', 'manager', 'supermanager', 'tl', 'employee', 'client'].includes(finalRole)) {
       return res.status(400).json({ message: 'Invalid role' })
     }
 
-    // Generate username if not provided
-    const finalUsername = username || loginUsername || employeeId || officialEmail.split('@')[0]
+    // Generate username if not provided (draft needs unique username)
+    const baseUsername = username || loginUsername || (finalEmployeeId && !finalEmployeeId.startsWith('DRAFT-') ? finalEmployeeId : null) || (finalOfficialEmail && !finalOfficialEmail.includes('@temp.local') ? finalOfficialEmail.split('@')[0] : null)
+    const finalUsername = baseUsername || (isDraft ? `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : '')
 
     // Generate fullName if not provided
     const finalFullName = fullName || `${firstName} ${lastName || ''}`.trim()
 
-    // Check for existing user
+    // Check for existing user (skip for draft placeholders that we generate)
     const existingUser = await User.findOne({
       $or: [
         { username: finalUsername },
-        { officialEmail: officialEmail.toLowerCase() },
-        { employeeId: employeeId }
-      ]
+        ...(finalOfficialEmail && !finalOfficialEmail.includes('@temp.local') ? [{ officialEmail: finalOfficialEmail }] : []),
+        ...(finalEmployeeId && !finalEmployeeId.startsWith('DRAFT-') ? [{ employeeId: finalEmployeeId }] : [])
+      ].filter(Boolean)
     })
 
     if (existingUser) {
       let message = 'User already exists'
       if (existingUser.username === finalUsername) message = 'Username already exists'
-      else if (existingUser.officialEmail === officialEmail.toLowerCase()) message = 'Official Email already exists'
-      else if (existingUser.employeeId === employeeId) message = 'Employee ID already exists'
-
+      else if (finalOfficialEmail && existingUser.officialEmail === finalOfficialEmail) message = 'Official Email already exists'
+      else if (finalEmployeeId && existingUser.employeeId === finalEmployeeId) message = 'Employee ID already exists'
       return res.status(400).json({ message })
     }
 
@@ -280,18 +329,21 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
     // Number fields that need conversion
     const numberFields = ['probationPeriod', 'noticePeriod', 'salary', 'numberOfChildren']
 
-    // Build user data object
+    // Build user data object (avoid email: null to prevent E11000 duplicate key on email index)
+    const finalEmail = email && String(email).trim()
+      ? email.toLowerCase()
+      : (isDraft ? `draft-email-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@temp.local` : undefined)
     const userData = {
       username: finalUsername,
-      officialEmail: officialEmail.toLowerCase(),
-      email: email ? email.toLowerCase() : undefined,
+      officialEmail: finalOfficialEmail,
+      email: finalEmail,
       password: finalPassword,
-      role,
+      role: finalRole,
       fullName: finalFullName,
       firstName,
-      lastName, // Added explicitly
-      phone,
-      employeeId,
+      lastName,
+      phone: finalPhone,
+      employeeId: finalEmployeeId,
       assignedProjects,
       ...otherFields
     }
@@ -320,6 +372,11 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
         delete userData[key]
       }
     })
+
+    // Never store profile image as base64; use avatar upload endpoint and store URL only
+    if (userData.profileImage && String(userData.profileImage).startsWith('data:image')) {
+      delete userData.profileImage
+    }
 
     const user = new User(userData)
     await user.save()
@@ -407,6 +464,27 @@ router.get('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
   }
 })
 
+// Admin: upload profile image (file, not base64). Must be before PUT /users/:id
+router.put('/users/:id/avatar', authenticate, requireRole('admin'), upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided. Use field name "avatar".' })
+    }
+    const user = await User.findById(req.params.id)
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' })
+    }
+    const relativePath = path.join('/uploads', 'profiles', req.file.filename).replace(/\\/g, '/')
+    user.profileImage = relativePath
+    user.profileImageOriginalName = req.file.originalname || user.profileImageOriginalName
+    await user.save()
+    res.json({ profileImage: relativePath, profileImageOriginalName: user.profileImageOriginalName })
+  } catch (error) {
+    console.error('Avatar upload error:', error)
+    res.status(500).json({ message: 'Server error while uploading avatar', error: error.message })
+  }
+})
+
 // Admin: update user
 router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) => {
   try {
@@ -460,6 +538,11 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
         updateData[key] = otherFields[key]
       }
     })
+
+    // Never store profile image as base64; use avatar upload endpoint
+    if (updateData.profileImage && String(updateData.profileImage).startsWith('data:image')) {
+      delete updateData.profileImage
+    }
 
     // Convert date fields
     dateFields.forEach(field => {

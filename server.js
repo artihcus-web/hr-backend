@@ -10,6 +10,7 @@ import employeeRoutes from './routes/employees.js'
 import activityRoutes from './routes/activity.js'
 import grievanceRoutes from './routes/grievance.js'
 import formConfigRoutes from './routes/formConfig.js'
+import adminControllersRoutes from './routes/adminControllers.js'
 import User from './models/User.js'
 
 // CI/CD auto-deployment: Builds Docker image, pushes to Docker Hub, deploys to server
@@ -67,7 +68,11 @@ app.use(cors({
 // Explicitly handle preflight for all routes
 app.options('*', cors())
 
-app.use(express.json())
+// JSON payloads (profile images are uploaded as files, not base64)
+app.use(express.json({ limit: '512kb' }))
+
+// Serve uploaded files (profile images)
+app.use('/uploads', express.static('uploads'))
 
 // Routes
 app.use('/api/auth', authRoutes)
@@ -78,6 +83,7 @@ app.use('/api/employees', employeeRoutes)
 app.use('/api/activity', activityRoutes)
 app.use('/api/grievance', grievanceRoutes)
 app.use('/api/form-config', formConfigRoutes)
+app.use('/api/admin/controllers', adminControllersRoutes)
 
 // Health check route
 app.get('/api/health', (_req, res) => {

@@ -41,8 +41,10 @@ const formConfigSchema = new mongoose.Schema({
     formType: {
         type: String,
         required: true,
-        enum: ['employee', 'project', 'timesheet', 'grievance'],
-        unique: true
+        // Removed enum restriction to allow dynamic form types
+        unique: true,
+        lowercase: true,
+        trim: true
     },
     formName: { type: String, required: true }, // Display name
     description: String,
