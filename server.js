@@ -107,14 +107,26 @@ app.get('/', (_req, res) => {
 })
 
 // MongoDB connection
+// Default URI for local development (unauthenticated)
+// For authenticated MongoDB, use: mongodb://username:password@localhost:27017/myapp?authSource=admin
+// For remote MongoDB, update MONGODB_URI in .env file
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/myapp'
 const PORT = process.env.PORT || 5000
 
-// Try to connect to MongoDB, but allow server to run without it for local dev
+// Optionally create default admin user (disabled by default)
+// Set CREATE_DEFAULT_ADMIN=true in .env to enable
 const ensureDefaultAdmin = async () => {
+  // Check if default admin creation is enabled
+  if (process.env.CREATE_DEFAULT_ADMIN !== 'true') {
+    return // Silently skip if disabled
+  }
+
   try {
     const adminExists = await User.findOne({ role: 'admin' })
-    if (adminExists) return
+    if (adminExists) {
+      console.log('ℹ️  Admin user already exists, skipping default admin creation')
+      return
+    }
 
     const username = process.env.ADMIN_USERNAME || 'admin'
     const email = process.env.ADMIN_EMAIL || 'admin@example.com'
@@ -128,14 +140,26 @@ const ensureDefaultAdmin = async () => {
   }
 }
 
+// MongoDB connection with improved error handling
 mongoose
-  .connect(MONGODB_URI)
+  .connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+    socketTimeoutMS: 45000,
+  })
   .then(async () => {
     console.log('✅ Connected to MongoDB')
+    console.log(`📍 MongoDB URI: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`) // Hide credentials in logs
     await ensureDefaultAdmin()
   })
   .catch((error) => {
-    console.warn('⚠️  MongoDB connection failed:', error.message)
+    console.error('❌ MongoDB connection failed:', error.message)
+    if (error.message.includes('ECONNREFUSED')) {
+      console.error('💡 Connection refused. Check if:')
+      console.error('   1. MongoDB is running locally (mongodb://localhost:27017)')
+      console.error('   2. Remote MongoDB server is accessible')
+      console.error('   3. Firewall/network allows connection to MongoDB port')
+      console.error(`   4. MONGODB_URI in .env is correct (currently: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')})`)
+    }
     if (process.env.NODE_ENV === 'production') {
       console.error('❌ Exiting in production mode')
       process.exit(1)
