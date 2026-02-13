@@ -454,6 +454,22 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
       }
     })
 
+    // Validate PDF attachments (Education and Documents)
+    if (userData.education && Array.isArray(userData.education)) {
+      for (const edu of userData.education) {
+        if (edu.fileName && !edu.fileName.toLowerCase().endsWith('.pdf')) {
+          return res.status(400).json({ message: 'Education attachments must be PDF files only. Invalid file: ' + edu.fileName })
+        }
+      }
+    }
+    if (userData.documents && Array.isArray(userData.documents)) {
+      for (const doc of userData.documents) {
+        if (doc.fileName && !doc.fileName.toLowerCase().endsWith('.pdf')) {
+          return res.status(400).json({ message: 'Document attachments must be PDF files only. Invalid file: ' + doc.fileName })
+        }
+      }
+    }
+
     // Remove empty strings (keep false/0 values for booleans/numbers)
     Object.keys(userData).forEach(key => {
       if (userData[key] === '' || userData[key] === null) {
@@ -682,6 +698,22 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
         else delete updateData[field]
       }
     })
+
+    // Validate PDF attachments (Education and Documents)
+    if (updateData.education && Array.isArray(updateData.education)) {
+      for (const edu of updateData.education) {
+        if (edu.fileName && !edu.fileName.toLowerCase().endsWith('.pdf')) {
+          return res.status(400).json({ message: 'Education attachments must be PDF files only. Invalid file: ' + edu.fileName })
+        }
+      }
+    }
+    if (updateData.documents && Array.isArray(updateData.documents)) {
+      for (const doc of updateData.documents) {
+        if (doc.fileName && !doc.fileName.toLowerCase().endsWith('.pdf')) {
+          return res.status(400).json({ message: 'Document attachments must be PDF files only. Invalid file: ' + doc.fileName })
+        }
+      }
+    }
 
     // Update user
     Object.assign(user, updateData)
