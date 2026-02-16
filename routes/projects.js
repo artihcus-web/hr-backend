@@ -3,27 +3,59 @@ import Project from '../models/Project.js'
 import User from '../models/User.js'
 import ActivityLog from '../models/ActivityLog.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
+import { transformUsers } from '../utils/transformUser.js'
 
 const router = express.Router()
+
+// Helper to transform populated users in projects
+function transformProjectUsers(project) {
+  const projectObj = project.toObject ? project.toObject() : { ...project }
+  
+  if (projectObj.employees) {
+    projectObj.employees = transformUsers(projectObj.employees)
+  }
+  if (projectObj.projectManagers) {
+    projectObj.projectManagers = transformUsers(projectObj.projectManagers)
+  }
+  if (projectObj.clients) {
+    projectObj.clients = transformUsers(projectObj.clients)
+  }
+  if (projectObj.createdBy) {
+    projectObj.createdBy = transformUsers([projectObj.createdBy])[0]
+  }
+  if (projectObj.managerAssignments) {
+    projectObj.managerAssignments = projectObj.managerAssignments.map(assignment => ({
+      ...assignment,
+      employee: assignment.employee ? transformUsers([assignment.employee])[0] : assignment.employee,
+      manager: assignment.manager ? transformUsers([assignment.manager])[0] : assignment.manager
+    }))
+  }
+  
+  return projectObj
+}
 
 // Get all projects (public access)
 router.get('/', async (req, res) => {
   try {
     const projects = await Project.find()
       .sort({ createdAt: -1 })
-      .populate('createdBy', 'username fullName')
-      .populate('employees', 'username fullName email employeeId')
-      .populate('projectManagers', 'username fullName email employeeId')
-      .populate('clients', 'username fullName email employeeId')
+      .populate('createdBy', 'username fullName profileImage')
+      .populate('employees', 'username fullName email employeeId profileImage')
+      .populate('projectManagers', 'username fullName email employeeId profileImage')
+      .populate('clients', 'username fullName email employeeId profileImage')
       .populate({
         path: 'managerAssignments.employee',
-        select: 'username fullName email employeeId'
+        select: 'username fullName email employeeId profileImage'
       })
       .populate({
         path: 'managerAssignments.manager',
-        select: 'username fullName email employeeId'
+        select: 'username fullName email employeeId profileImage'
       })
-    res.json({ projects })
+    
+    // Transform profileImage GridFS IDs to endpoint URLs
+    const transformedProjects = projects.map(project => transformProjectUsers(project))
+    
+    res.json({ projects: transformedProjects })
   } catch (error) {
     console.error('Get projects error:', error)
     res.status(500).json({ message: 'Server error while fetching projects' })
@@ -43,20 +75,23 @@ router.get('/my-projects', authenticate, async (req, res) => {
       ]
     })
       .sort({ createdAt: -1 })
-      .populate('createdBy', 'username fullName')
-      .populate('employees', 'username fullName email employeeId')
-      .populate('projectManagers', 'username fullName email employeeId')
-      .populate('clients', 'username fullName email employeeId')
+      .populate('createdBy', 'username fullName profileImage')
+      .populate('employees', 'username fullName email employeeId profileImage')
+      .populate('projectManagers', 'username fullName email employeeId profileImage')
+      .populate('clients', 'username fullName email employeeId profileImage')
       .populate({
         path: 'managerAssignments.employee',
-        select: 'username fullName email employeeId'
+        select: 'username fullName email employeeId profileImage'
       })
       .populate({
         path: 'managerAssignments.manager',
-        select: 'username fullName email employeeId'
+        select: 'username fullName email employeeId profileImage'
       })
 
-    res.json({ projects })
+    // Transform profileImage GridFS IDs to endpoint URLs
+    const transformedProjects = projects.map(project => transformProjectUsers(project))
+
+    res.json({ projects: transformedProjects })
   } catch (error) {
     console.error('Get user projects error:', error)
     res.status(500).json({ message: 'Server error while fetching projects' })
@@ -67,22 +102,26 @@ router.get('/my-projects', authenticate, async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const project = await Project.findById(req.params.id)
-      .populate('createdBy', 'username fullName')
-      .populate('employees', 'username fullName email employeeId')
-      .populate('projectManagers', 'username fullName email employeeId')
-      .populate('clients', 'username fullName email employeeId')
+      .populate('createdBy', 'username fullName profileImage')
+      .populate('employees', 'username fullName email employeeId profileImage')
+      .populate('projectManagers', 'username fullName email employeeId profileImage')
+      .populate('clients', 'username fullName email employeeId profileImage')
       .populate({
         path: 'managerAssignments.employee',
-        select: 'username fullName email employeeId'
+        select: 'username fullName email employeeId profileImage'
       })
       .populate({
         path: 'managerAssignments.manager',
-        select: 'username fullName email employeeId'
+        select: 'username fullName email employeeId profileImage'
       })
     if (!project) {
       return res.status(404).json({ message: 'Project not found' })
     }
-    res.json({ project })
+    
+    // Transform profileImage GridFS IDs to endpoint URLs
+    const transformedProject = transformProjectUsers(project)
+    
+    res.json({ project: transformedProject })
   } catch (error) {
     console.error('Get project error:', error)
     res.status(500).json({ message: 'Server error while fetching project' })

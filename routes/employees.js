@@ -1,8 +1,9 @@
 import express from 'express'
 import User from '../models/User.js'
 import { authenticate } from '../middleware/auth.js'
+import { transformUsers, transformProfileImage } from '../utils/transformUser.js'
  
- 
+
 const router = express.Router()
  
 // Get all employees (authenticated access - for employee directory)
@@ -13,8 +14,11 @@ router.get('/', authenticate, async (req, res) => {
         const allUsers = await User.find()
             .select('-password -__v')
             .sort({ employeeId: 1 }) // Sort by employeeId ascending
+        
+        // Transform profileImage GridFS IDs to endpoint URLs
+        const transformedUsers = transformUsers(allUsers)
  
-        res.json({ employees: allUsers, users: allUsers }) // Support both 'employees' and 'users' for compatibility
+        res.json({ employees: transformedUsers, users: transformedUsers }) // Support both 'employees' and 'users' for compatibility
     } catch (error) {
         console.error('Get employees error:', error)
         res.status(500).json({ message: 'Server error while fetching employees' })
@@ -31,8 +35,11 @@ router.get('/:id', async (req, res) => {
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found' })
         }
+        
+        // Transform profileImage GridFS ID to endpoint URL
+        const transformedEmployee = transformProfileImage(employee)
  
-        res.json({ employee })
+        res.json({ employee: transformedEmployee })
     } catch (error) {
         console.error('Get employee error:', error)
         res.status(500).json({ message: 'Server error while fetching employee' })

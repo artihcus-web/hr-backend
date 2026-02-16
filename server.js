@@ -1,13 +1,12 @@
 import express from 'express'
 import mongoose from 'mongoose'
+import { GridFSBucket } from 'mongodb'
 import cors from 'cors'
 import dotenv from 'dotenv'
-import path from 'path'
-import { fileURLToPath } from 'url'
 import authRoutes from './routes/auth.js'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// GridFSBucket for storing profile images
+let gfsBucket = null
 import projectRoutes from './routes/projects.js'
 import timesheetRoutes from './routes/timesheet.js'
 import benchRoutes from './routes/benches.js'
@@ -78,24 +77,8 @@ app.options('*', cors())
 // JSON payloads (profile images are uploaded as files, not base64)
 app.use(express.json({ limit: '512kb' }))
 
-// Serve uploaded files (profile images) with caching headers for better performance
-// Use absolute path to ensure correct resolution in production
-const uploadsPath = path.join(__dirname, 'uploads')
-app.use('/uploads', express.static(uploadsPath, {
-  maxAge: '1y', // Cache for 1 year
-  etag: true, // Enable ETag for cache validation
-  lastModified: true, // Enable Last-Modified header
-  setHeaders: (res, filePath) => {
-    // Set cache headers for images
-    if (filePath.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
-    }
-    // Set cache headers for PDFs
-    if (filePath.match(/\.pdf$/i)) {
-      res.setHeader('Cache-Control', 'public, max-age=86400') // Cache PDFs for 1 day
-    }
-  }
-}))
+// Profile images are now stored in MongoDB GridFS, served via /api/auth/users/:id/avatar
+// No need for static /uploads route - GridFS handles all image storage and serving
 
 // Routes
 app.use('/api/auth', authRoutes)
@@ -172,6 +155,12 @@ mongoose
   .then(async () => {
     console.log('✅ Connected to MongoDB')
     console.log(`📍 MongoDB URI: ${MONGODB_URI.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`) // Hide credentials in logs
+    
+    // Initialize GridFSBucket for profile images
+    const db = mongoose.connection.db
+    gfsBucket = new GridFSBucket(db, { bucketName: 'profileImages' })
+    console.log('✅ GridFSBucket initialized for profile images')
+    
     await ensureDefaultAdmin()
   })
   .catch((error) => {
@@ -199,3 +188,4 @@ app.listen(PORT, '0.0.0.0', () => {
 })
 
 export default app
+export { gfsBucket }

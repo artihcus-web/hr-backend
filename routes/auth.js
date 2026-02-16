@@ -1,11 +1,6 @@
 import express from 'express'
-import path from 'path'
-import { fileURLToPath } from 'url'
-import fs from 'fs'
 import multer from 'multer'
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+import { ObjectId } from 'mongodb'
 import jwt from 'jsonwebtoken'
 import User from '../models/User.js'
 import Project from '../models/Project.js'
@@ -13,26 +8,18 @@ import ActivityLog from '../models/ActivityLog.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import crypto from 'crypto'
 import { sendPasswordResetEmail } from '../services/emailService.js'
+import { gfsBucket } from '../server.js'
+import { transformProfileImage } from '../utils/transformUser.js'
 
-const uploadsDir = path.join(__dirname, '..', 'uploads', 'profiles')
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true })
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = (file.originalname && path.extname(file.originalname)) || (file.mimetype === 'image/png' ? '.png' : '.jpg')
-    const name = `${req.params.id}-${Date.now()}${ext}`
-    cb(null, name)
-  }
-})
+// Use memory storage for GridFS (files stored in MongoDB, not filesystem)
 const upload = multer({
-  storage,
-  limits: { fileSize: 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024 }, // 1MB limit
   fileFilter: (_req, file, cb) => {
-    if (['image/jpeg', 'image/png'].includes(file.mimetype)) return cb(null, true)
-    cb(new Error('Only JPEG and PNG are allowed'))
+    if (['image/jpeg', 'image/png', 'image/jpg'].includes(file.mimetype)) {
+      return cb(null, true)
+    }
+    cb(new Error('Only JPEG and PNG images are allowed'))
   }
 })
 
@@ -240,7 +227,9 @@ router.get('/me', authenticate, async (req, res) => {
       }
     }
 
-    res.json({ user })
+    // Transform GridFS ID to endpoint URL
+    const transformedUser = transformProfileImage({ ...user, _id: user._id })
+    res.json({ user: transformedUser })
   } catch (error) {
     console.error('Error fetching me:', error)
     res.status(500).json({ message: 'Server error' })
@@ -543,7 +532,9 @@ router.get('/users', authenticate, requireRole('admin', 'c-suite'), async (_req,
     const usersWithAssignments = users.map(user => {
       const u = user.toObject()
       // Skip for admins to check efficiently
-      if (u.role === 'admin') return u
+      if (u.role === 'admin') {
+        return transformProfileImage({ ...u, _id: u._id })
+      }
 
       u.currentAssignments = activeProjects.reduce((acc, p) => {
         const isManager = p.projectManagers.some(id => id.toString() === user._id.toString())
@@ -557,7 +548,9 @@ router.get('/users', authenticate, requireRole('admin', 'c-suite'), async (_req,
         }
         return acc
       }, [])
-      return u
+      
+      // Transform GridFS ID to endpoint URL
+      return transformProfileImage({ ...u, _id: u._id })
     })
 
     res.json({ users: usersWithAssignments })
@@ -574,28 +567,122 @@ router.get('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
     if (!user) {
       return res.status(404).json({ message: 'User not found' })
     }
-    res.json({ user })
+    const transformedUser = transformProfileImage(user)
+    res.json({ user: transformedUser })
   } catch (error) {
     console.error('Get user error:', error)
     res.status(500).json({ message: 'Server error while fetching user' })
   }
 })
 
-// Admin: upload profile image (file, not base64). Must be before PUT /users/:id
+// GET: Serve profile image from GridFS
+router.get('/users/:id/avatar', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+    if (!user || !user.profileImage) {
+      return res.status(404).json({ message: 'Profile image not found' })
+    }
+
+    // Check if profileImage is a GridFS ObjectId (new format) or file path (legacy)
+    let fileId
+    if (ObjectId.isValid(user.profileImage)) {
+      // New GridFS format
+      fileId = new ObjectId(user.profileImage)
+    } else {
+      // Legacy file path format - return 404 (migrate old images if needed)
+      return res.status(404).json({ message: 'Legacy image format. Please re-upload.' })
+    }
+
+    // Check if file exists in GridFS
+    const files = await gfsBucket.find({ _id: fileId }).toArray()
+    if (!files || files.length === 0) {
+      return res.status(404).json({ message: 'Image file not found in storage' })
+    }
+
+    const file = files[0]
+    
+    // Set cache headers
+    res.setHeader('Content-Type', file.contentType || 'image/jpeg')
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    res.setHeader('Content-Length', file.length)
+
+    // Stream file from GridFS
+    const downloadStream = gfsBucket.openDownloadStream(fileId)
+    downloadStream.pipe(res)
+    
+    downloadStream.on('error', (error) => {
+      console.error('GridFS stream error:', error)
+      if (!res.headersSent) {
+        res.status(500).json({ message: 'Error streaming image' })
+      }
+    })
+  } catch (error) {
+    console.error('Avatar serve error:', error)
+    res.status(500).json({ message: 'Server error while serving avatar', error: error.message })
+  }
+})
+
+// Admin: upload profile image to GridFS. Must be before PUT /users/:id
 router.put('/users/:id/avatar', authenticate, requireRole('admin'), upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No image file provided. Use field name "avatar".' })
     }
+
     const user = await User.findById(req.params.id)
     if (!user) {
       return res.status(404).json({ message: 'User not found' })
     }
-    const relativePath = path.join('/uploads', 'profiles', req.file.filename).replace(/\\/g, '/')
-    user.profileImage = relativePath
-    user.profileImageOriginalName = req.file.originalname || user.profileImageOriginalName
-    await user.save()
-    res.json({ profileImage: relativePath, profileImageOriginalName: user.profileImageOriginalName })
+
+    // Delete old image from GridFS if exists
+    if (user.profileImage && ObjectId.isValid(user.profileImage)) {
+      try {
+        await gfsBucket.delete(new ObjectId(user.profileImage))
+      } catch (err) {
+        console.warn('Could not delete old image:', err.message)
+      }
+    }
+
+    // Generate unique filename
+    const filename = `${req.params.id}-${Date.now()}-${req.file.originalname || 'avatar.jpg'}`
+
+    // Create upload stream to GridFS
+    const uploadStream = gfsBucket.openUploadStream(filename, {
+      contentType: req.file.mimetype,
+      metadata: {
+        userId: req.params.id,
+        originalName: req.file.originalname,
+        uploadedAt: new Date()
+      }
+    })
+
+    // Write buffer to GridFS
+    uploadStream.end(req.file.buffer)
+
+    // Wait for upload to complete
+    uploadStream.on('finish', async () => {
+      try {
+        // Store GridFS file ID in user document
+        user.profileImage = uploadStream.id.toString()
+        user.profileImageOriginalName = req.file.originalname || user.profileImageOriginalName
+        await user.save()
+
+        // Return API endpoint URL (not GridFS ID)
+        const imageUrl = `/api/auth/users/${user._id}/avatar`
+        res.json({ 
+          profileImage: imageUrl,
+          profileImageOriginalName: user.profileImageOriginalName 
+        })
+      } catch (error) {
+        console.error('Error saving user after upload:', error)
+        res.status(500).json({ message: 'Error saving user data', error: error.message })
+      }
+    })
+
+    uploadStream.on('error', (error) => {
+      console.error('GridFS upload error:', error)
+      res.status(500).json({ message: 'Error uploading image to storage', error: error.message })
+    })
   } catch (error) {
     console.error('Avatar upload error:', error)
     res.status(500).json({ message: 'Server error while uploading avatar', error: error.message })
