@@ -342,8 +342,10 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
 
     const finalPassword = password || (finalEmployeeId && finalEmployeeId.startsWith('DRAFT-') ? `Temp@${Date.now().toString().slice(-4)}` : finalEmployeeId)
 
-    if (!['admin', 'c-suite', 'hr', 'manager', 'supermanager', 'tl', 'employee', 'client'].includes(finalRole)) {
-      return res.status(400).json({ message: 'Invalid role' })
+    // Accept any non-empty role (supports dynamic roles from schema config)
+    const normalizedRole = String(finalRole).trim().toLowerCase()
+    if (!normalizedRole) {
+      return res.status(400).json({ message: 'Role is required' })
     }
 
     // Generate username if not provided (draft needs unique username)
@@ -426,7 +428,7 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
       officialEmail: finalOfficialEmail,
       email: finalEmail,
       password: finalPassword,
-      role: finalRole,
+      role: normalizedRole,
       fullName: finalFullName,
       firstName,
       lastName,
@@ -466,6 +468,17 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
       for (const doc of userData.documents) {
         if (doc.fileName && !doc.fileName.toLowerCase().endsWith('.pdf')) {
           return res.status(400).json({ message: 'Document attachments must be PDF files only. Invalid file: ' + doc.fileName })
+        }
+      }
+    }
+    if (userData.experience && Array.isArray(userData.experience)) {
+      for (const exp of userData.experience) {
+        if (exp.attachments && Array.isArray(exp.attachments)) {
+          for (const att of exp.attachments) {
+            if (att.fileName && !String(att.fileName).toLowerCase().endsWith('.pdf')) {
+              return res.status(400).json({ message: 'Experience attachments must be PDF only. Invalid file: ' + att.fileName })
+            }
+          }
         }
       }
     }
@@ -625,11 +638,14 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
     if (firstName) updateData.firstName = firstName
     if (lastName !== undefined) updateData.lastName = lastName
     if (middleName !== undefined) updateData.middleName = middleName
-    if (email !== undefined) updateData.email = email ? email.toLowerCase() : undefined
+    // Only set email when it has a value - empty/null causes MongoDB E11000 duplicate key on email index
+    if (email !== undefined && email !== null && String(email).trim()) {
+      updateData.email = String(email).trim().toLowerCase()
+    }
     if (officialEmail) updateData.officialEmail = officialEmail.toLowerCase()
     if (phone) updateData.phone = phone
     if (employeeId) updateData.employeeId = employeeId
-    if (role) updateData.role = role
+    if (role) updateData.role = String(role).trim().toLowerCase()
     if (fullName) updateData.fullName = fullName
     if (username || loginUsername) updateData.username = username || loginUsername || employeeId || officialEmail?.split('@')[0]
     if (password) updateData.password = password // Will be hashed by pre-save hook
@@ -714,6 +730,17 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
         }
       }
     }
+    if (updateData.experience && Array.isArray(updateData.experience)) {
+      for (const exp of updateData.experience) {
+        if (exp.attachments && Array.isArray(exp.attachments)) {
+          for (const att of exp.attachments) {
+            if (att.fileName && !String(att.fileName).toLowerCase().endsWith('.pdf')) {
+              return res.status(400).json({ message: 'Experience attachments must be PDF only. Invalid file: ' + att.fileName })
+            }
+          }
+        }
+      }
+    }
 
     // Update user
     Object.assign(user, updateData)
@@ -762,7 +789,34 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
     })
   } catch (error) {
     console.error('Update user error:', error)
-    res.status(500).json({ message: 'Server error while updating user', error: error.message })
+
+    // MongoDB duplicate key (E11000) - return user-friendly message
+    if (error.code === 11000 || error.name === 'MongoServerError') {
+      const keyMatch = error.message?.match(/dup key: \{ ([^}]+) \}/)
+      const keyValue = keyMatch ? keyMatch[1] : 'field'
+      let fieldName = keyValue.split(':')[0]?.trim() || 'field'
+      fieldName = fieldName.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+      const value = keyValue.includes(':') ? keyValue.split(':')[1]?.trim() : ''
+      if (value === 'null' || value === '""') {
+        return res.status(400).json({
+          message: `${fieldName} cannot be empty when another user already has no value. Please enter a unique ${fieldName.toLowerCase()}.`
+        })
+      }
+      return res.status(400).json({
+        message: `${fieldName} already exists. Please use a different value.`
+      })
+    }
+
+    // Mongoose validation error
+    if (error.name === 'ValidationError') {
+      const firstErr = Object.values(error.errors || {})[0]
+      const msg = firstErr?.message || error.message
+      return res.status(400).json({ message: msg })
+    }
+
+    // Return actual error message for client to display
+    const userMessage = error.message || 'Server error while updating user'
+    res.status(500).json({ message: userMessage })
   }
 })
 

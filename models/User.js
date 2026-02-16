@@ -52,8 +52,9 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'c-suite', 'hr', 'manager', 'supermanager', 'tl', 'employee', 'client'],
-    default: 'employee'
+    default: 'employee',
+    trim: true
+    // No enum - allows dynamic roles from schema config (admin creates roles in form config)
   },
   isActive: {
     type: Boolean,
@@ -165,7 +166,13 @@ const userSchema = new mongoose.Schema({
     organization: String,
     designation: String,
     fromDate: Date,
-    toDate: Date
+    toDate: Date,
+    // Flexible attachments: user gives each a name (e.g. "Experience letter", "Payslips")
+    attachments: [{
+      name: String,      // User-defined label (e.g. "Experience Details", "Payslips Jan-Mar")
+      fileName: String,
+      fileUrl: String
+    }]
   }],
   salary: Number,
 

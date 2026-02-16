@@ -23,7 +23,7 @@ const adminControllerPermissionSchema = new mongoose.Schema({
   timestamps: true
 })
 
-adminControllerPermissionSchema.index({ feature: 1 })
+// Index already created by unique: true on feature; no need for duplicate schema.index()
 
 const AdminControllerPermission = mongoose.model('AdminControllerPermission', adminControllerPermissionSchema)
 
