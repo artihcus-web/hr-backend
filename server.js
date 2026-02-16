@@ -2,7 +2,12 @@ import express from 'express'
 import mongoose from 'mongoose'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import authRoutes from './routes/auth.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 import projectRoutes from './routes/projects.js'
 import timesheetRoutes from './routes/timesheet.js'
 import benchRoutes from './routes/benches.js'
@@ -73,8 +78,24 @@ app.options('*', cors())
 // JSON payloads (profile images are uploaded as files, not base64)
 app.use(express.json({ limit: '512kb' }))
 
-// Serve uploaded files (profile images)
-app.use('/uploads', express.static('uploads'))
+// Serve uploaded files (profile images) with caching headers for better performance
+// Use absolute path to ensure correct resolution in production
+const uploadsPath = path.join(__dirname, 'uploads')
+app.use('/uploads', express.static(uploadsPath, {
+  maxAge: '1y', // Cache for 1 year
+  etag: true, // Enable ETag for cache validation
+  lastModified: true, // Enable Last-Modified header
+  setHeaders: (res, filePath) => {
+    // Set cache headers for images
+    if (filePath.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    }
+    // Set cache headers for PDFs
+    if (filePath.match(/\.pdf$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=86400') // Cache PDFs for 1 day
+    }
+  }
+}))
 
 // Routes
 app.use('/api/auth', authRoutes)
