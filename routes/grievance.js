@@ -294,4 +294,56 @@ router.put('/admin/types/:id/toggle', authenticate, requireRole('admin', 'super_
     }
 })
 
+// Update Type Name
+router.put('/admin/types/:id', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+    try {
+        const { name } = req.body
+        if (!name || !name.trim()) {
+            return res.status(400).json({ message: 'Name is required' })
+        }
+
+        const type = await GrievanceType.findById(req.params.id)
+        if (!type) return res.status(404).json({ message: 'Type not found' })
+
+        // Check if name already exists (excluding current type)
+        const existing = await GrievanceType.findOne({ name: name.trim(), _id: { $ne: req.params.id } })
+        if (existing) {
+            return res.status(400).json({ message: 'Type name already exists' })
+        }
+
+        type.name = name.trim()
+        await type.save()
+
+        const updatedType = await GrievanceType.findById(req.params.id).populate('assignedHrs', 'fullName email role')
+
+        res.json({ message: 'Issue type updated successfully', type: updatedType })
+    } catch (error) {
+        console.error('Update type error:', error)
+        res.status(500).json({ message: 'Server error updating type' })
+    }
+})
+
+// Delete Type
+router.delete('/admin/types/:id', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+    try {
+        const type = await GrievanceType.findById(req.params.id)
+        if (!type) return res.status(404).json({ message: 'Type not found' })
+
+        // Check if there are any grievances using this type
+        const grievanceCount = await Grievance.countDocuments({ issueType: req.params.id })
+        if (grievanceCount > 0) {
+            return res.status(400).json({ 
+                message: `Cannot delete type. There are ${grievanceCount} grievance(s) associated with this type.` 
+            })
+        }
+
+        await GrievanceType.findByIdAndDelete(req.params.id)
+
+        res.json({ message: 'Issue type deleted successfully' })
+    } catch (error) {
+        console.error('Delete type error:', error)
+        res.status(500).json({ message: 'Server error deleting type' })
+    }
+})
+
 export default router
