@@ -587,44 +587,39 @@ router.get('/users/:id/avatar', async (req, res) => {
       return res.status(404).json({ message: 'Profile image not found' })
     }
 
-    // Get the raw profileImage value from database (before any transformation)
-    // It should be a GridFS ObjectId string
-    let fileId
-    
-    // Handle different formats:
-    // 1. GridFS ObjectId (24 char hex string) - stored in database
-    if (ObjectId.isValid(user.profileImage)) {
-      fileId = new ObjectId(user.profileImage)
-    } 
-    // 2. If it's already a path (shouldn't happen, but handle it)
-    else if (typeof user.profileImage === 'string' && user.profileImage.startsWith('/api/auth/users/')) {
-      // Extract ObjectId from path or try to find file by metadata
-      // This shouldn't happen if transformProfileImage is only used for responses, not storage
-      return res.status(404).json({ message: 'Invalid image format. Please re-upload.' })
-    }
-    // 3. Legacy file path format
-    else {
-      return res.status(404).json({ message: 'Legacy image format. Please re-upload.' })
-    }
-
-    // Check if file exists in GridFS
     if (!gfsBucket) {
       console.error('GridFS bucket not initialized')
       return res.status(500).json({ message: 'Image storage not available' })
     }
 
+    // Get the raw profileImage value from database
+    let fileId
+
+    // Handle different formats:
+    // 1. GridFS ObjectId (24 char hex string) - stored in database
+    if (ObjectId.isValid(user.profileImage)) {
+      fileId = new ObjectId(user.profileImage)
+    }
+    // 2. Path format (/api/auth/users/:id/avatar) - find by metadata.userId
+    else if (typeof user.profileImage === 'string' && user.profileImage.includes('/avatar')) {
+      const filesByMetadata = await gfsBucket.find({ 'metadata.userId': req.params.id })
+        .sort({ uploadDate: -1 })
+        .limit(1)
+        .toArray()
+      if (filesByMetadata.length === 0) {
+        return res.status(404).json({ message: 'Image file not found in storage' })
+      }
+      fileId = filesByMetadata[0]._id
+    }
+    else {
+      return res.status(404).json({ message: 'Invalid image format. Please re-upload.' })
+    }
+
+    // Check if file exists in GridFS
     const files = await gfsBucket.find({ _id: fileId }).toArray()
     if (!files || files.length === 0) {
-      console.error(`GridFS file not found for ObjectId: ${fileId}, user.profileImage: ${user.profileImage}, userId: ${req.params.id}`)
-      // Return 404 with more details for debugging
-      return res.status(404).json({ 
-        message: 'Image file not found in storage',
-        debug: {
-          fileId: fileId.toString(),
-          profileImageValue: user.profileImage,
-          userId: req.params.id
-        }
-      })
+      console.error(`GridFS file not found: fileId=${fileId}, userId=${req.params.id}`)
+      return res.status(404).json({ message: 'Image file not found in storage' })
     }
 
     const file = files[0]
