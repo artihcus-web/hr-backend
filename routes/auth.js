@@ -188,26 +188,35 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     )
 
-    // Log Activity (Disabled to avoid clutter)
-    /*
-    await ActivityLog.create({
-      user: user._id,
-      action: 'LOGIN',
-      description: `User ${user.fullName} logged in.`,
-      target: 'Auth'
-    })
-    */
+    // Return full user (same as /me) - refetch by id to match /me exactly (includes profileImage)
+    const freshUser = await User.findById(user._id).select('-password')
+    if (!freshUser) {
+      return res.status(500).json({ message: 'User not found after login' })
+    }
+    const userObj = freshUser.toObject ? freshUser.toObject() : { ...freshUser }
+    const uid = String(freshUser._id || user._id)
+    const base = { ...userObj, _id: uid, id: uid }
+    if (freshUser.managerId) {
+      const manager = await User.findById(freshUser.managerId).select('fullName')
+      if (manager) base.managerName = manager.fullName
+    }
+    const transformedUser = transformProfileImage(base)
+    // Force _id, id, and profileImage so header gets avatar immediately after login
+    const responseUser = {
+      ...transformedUser,
+      _id: uid,
+      id: uid
+    }
+    if (freshUser.profileImage) {
+      responseUser.profileImage = (typeof transformedUser.profileImage === 'string' && transformedUser.profileImage.includes('/avatar'))
+        ? transformedUser.profileImage
+        : `/api/auth/users/${uid}/avatar`
+    }
 
     res.json({
       message: 'Login successful',
       token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        fullName: user.fullName
-      }
+      user: responseUser
     })
   } catch (error) {
     console.error('Login error:', error)
