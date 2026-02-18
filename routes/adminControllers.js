@@ -1,5 +1,6 @@
 import express from 'express'
 import AdminControllerPermission from '../models/AdminControllerPermission.js'
+import MenuConfiguration from '../models/MenuConfiguration.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import ActivityLog from '../models/ActivityLog.js'
 
@@ -81,6 +82,150 @@ router.put('/permissions', authenticate, requireRole('admin'), async (req, res) 
   } catch (error) {
     console.error('Update permissions error:', error)
     res.status(500).json({ message: 'Server error updating permissions' })
+  }
+})
+
+// Get menu configuration for a specific role (or all if admin)
+router.get('/menu-config/:role?', authenticate, async (req, res) => {
+  try {
+    const { role } = req.params
+    const userRole = req.user.role
+
+    // If no role specified and user is admin, return all configs
+    // Otherwise, return config for user's role
+    const targetRole = role || (userRole === 'admin' ? null : userRole)
+
+    let menuConfigs
+    if (targetRole === null) {
+      // Admin requesting all configs
+      menuConfigs = await MenuConfiguration.find().populate('users', 'fullName email employeeId').populate('updatedBy', 'fullName email')
+    } else {
+      // Get menu items visible for this role
+      menuConfigs = await MenuConfiguration.find({
+        $or: [
+          { roles: targetRole },
+          { users: req.user._id }
+        ]
+      }).populate('users', 'fullName email employeeId').populate('updatedBy', 'fullName email')
+    }
+
+    // Transform to frontend format
+    const menuItems = menuConfigs.map(item => {
+      // Convert Map to object for JSON serialization
+      const isVisibleObj = {}
+      const menuOrderObj = {}
+      
+      if (item.isVisible instanceof Map) {
+        item.isVisible.forEach((value, key) => {
+          isVisibleObj[key] = value
+        })
+      }
+      
+      if (item.menuOrder instanceof Map) {
+        item.menuOrder.forEach((value, key) => {
+          menuOrderObj[key] = value
+        })
+      }
+
+      const isVisible = targetRole ? (isVisibleObj[targetRole] ?? true) : undefined
+      const order = targetRole ? (menuOrderObj[targetRole] ?? 999) : undefined
+
+      return {
+        id: item.menuItemId,
+        label: item.label,
+        path: item.path,
+        icon: item.icon,
+        roles: item.roles,
+        users: item.users?.map(u => u._id.toString()) || [],
+        isVisible: isVisible,
+        menuOrder: order,
+        parentId: item.parentId,
+        hasChildren: item.hasChildren
+      }
+    })
+
+    // If specific role requested, filter and sort
+    if (targetRole) {
+      const filtered = menuItems
+        .filter(item => {
+          const hasRoleAccess = item.roles.includes(targetRole) || item.users.includes(req.user._id.toString())
+          const visible = item.isVisible !== false
+          return hasRoleAccess && visible
+        })
+        .sort((a, b) => (a.menuOrder || 999) - (b.menuOrder || 999))
+
+      return res.json({ menuItems: filtered, role: targetRole })
+    }
+
+    // Return all configs for admin
+    res.json({ menuItems, allRoles: true })
+  } catch (error) {
+    console.error('Get menu config error:', error)
+    res.status(500).json({ message: 'Server error fetching menu configuration' })
+  }
+})
+
+// Update menu configuration (admin only)
+router.put('/menu-config', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const { menuItems } = req.body
+
+    if (!menuItems || !Array.isArray(menuItems)) {
+      return res.status(400).json({ message: 'Invalid menu items data' })
+    }
+
+    const updates = []
+    for (const item of menuItems) {
+      const { id, label, path, icon, roles, users, isVisible, menuOrder, parentId, hasChildren } = item
+
+      if (!id || !label || !path) {
+        continue // Skip invalid items
+      }
+
+      // Build update object
+      const updateData = {
+        menuItemId: id,
+        label,
+        path,
+        icon: icon || '',
+        roles: roles || [],
+        users: users || [],
+        parentId: parentId || null,
+        hasChildren: hasChildren || false,
+        updatedBy: req.user._id
+      }
+
+      // Handle isVisible and menuOrder per role
+      if (isVisible && typeof isVisible === 'object' && !Array.isArray(isVisible)) {
+        updateData.isVisible = new Map(Object.entries(isVisible))
+      }
+      if (menuOrder && typeof menuOrder === 'object' && !Array.isArray(menuOrder)) {
+        updateData.menuOrder = new Map(Object.entries(menuOrder))
+      }
+
+      updates.push(
+        MenuConfiguration.findOneAndUpdate(
+          { menuItemId: id },
+          updateData,
+          { upsert: true, new: true }
+        )
+      )
+    }
+
+    await Promise.all(updates)
+
+    // Log activity
+    await ActivityLog.create({
+      user: req.user._id,
+      action: 'MENU_CONFIG_UPDATED',
+      description: 'Updated menu configuration',
+      target: 'menu-configuration'
+    })
+
+    res.json({ message: 'Menu configuration updated successfully' })
+  } catch (error) {
+    console.error('Update menu config error:', error)
+    res.status(500).json({ message: 'Server error updating menu configuration' })
   }
 })
 
