@@ -29,7 +29,7 @@ router.get('/:formType', authenticate, async (req, res) => {
 })
 
 // Get all form configurations (admin only)
-router.get('/', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.get('/', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const configs = await FormConfig.find()
             .populate('createdBy', 'fullName email')
@@ -44,7 +44,7 @@ router.get('/', authenticate, requireRole('admin', 'super_admin'), async (req, r
 })
 
 // Get list of form types (admin only) - returns metadata for tiles
-router.get('/types/list', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.get('/types/list', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const configs = await FormConfig.find({ isActive: true })
             .select('formType formName description')
@@ -67,7 +67,7 @@ router.get('/types/list', authenticate, requireRole('admin', 'super_admin'), asy
 })
 
 // Create new form type (admin only)
-router.post('/types', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.post('/types', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { name, slug, description } = req.body
 
@@ -111,7 +111,7 @@ router.post('/types', authenticate, requireRole('admin', 'super_admin'), async (
 })
 
 // Delete form type (admin only) - only if not default
-router.delete('/types/:formType', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.delete('/types/:formType', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { formType } = req.params
 
@@ -135,7 +135,7 @@ router.delete('/types/:formType', authenticate, requireRole('admin', 'super_admi
 })
 
 // Create new form configuration (admin or super admin)
-router.post('/', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.post('/', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { formType, formName, description, sections } = req.body
 
@@ -177,7 +177,7 @@ router.post('/', authenticate, requireRole('admin', 'super_admin'), async (req, 
 })
 
 // Update entire form configuration by ID (admin or super admin)
-router.put('/id/:id', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.put('/id/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id } = req.params
         const { formName, description, sections, isActive } = req.body
@@ -217,7 +217,7 @@ router.put('/id/:id', authenticate, requireRole('admin', 'super_admin'), async (
 })
 
 // Add section to form (admin or super admin)
-router.post('/:id/section', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.post('/:id/section', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id } = req.params
         const sectionData = req.body
@@ -248,7 +248,7 @@ router.post('/:id/section', authenticate, requireRole('admin', 'super_admin'), a
 })
 
 // Update section (admin or super admin)
-router.put('/:id/section/:sectionId', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.put('/:id/section/:sectionId', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id, sectionId } = req.params
         const updates = req.body
@@ -279,7 +279,7 @@ router.put('/:id/section/:sectionId', authenticate, requireRole('admin', 'super_
 })
 
 // Delete section (admin or super admin)
-router.delete('/:id/section/:sectionId', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.delete('/:id/section/:sectionId', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id, sectionId } = req.params
 
@@ -304,7 +304,7 @@ router.delete('/:id/section/:sectionId', authenticate, requireRole('admin', 'sup
 })
 
 // Add field to section (admin or super admin)
-router.post('/:id/section/:sectionId/field', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.post('/:id/section/:sectionId/field', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id, sectionId } = req.params
         const fieldData = req.body
@@ -340,7 +340,7 @@ router.post('/:id/section/:sectionId/field', authenticate, requireRole('admin', 
 })
 
 // Update field (admin or super admin)
-router.put('/:id/section/:sectionId/field/:fieldName', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.put('/:id/section/:sectionId/field/:fieldName', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id, sectionId, fieldName } = req.params
         const updates = req.body
@@ -376,7 +376,7 @@ router.put('/:id/section/:sectionId/field/:fieldName', authenticate, requireRole
 })
 
 // Delete field (admin or super admin)
-router.delete('/:id/section/:sectionId/field/:fieldName', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.delete('/:id/section/:sectionId/field/:fieldName', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id, sectionId, fieldName } = req.params
 
@@ -406,7 +406,7 @@ router.delete('/:id/section/:sectionId/field/:fieldName', authenticate, requireR
 })
 
 // Reorder sections (admin or super admin)
-router.put('/:id/sections/reorder', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.put('/:id/sections/reorder', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { id } = req.params
         const { sectionOrder } = req.body // Array of section IDs in new order
@@ -441,7 +441,7 @@ router.put('/:id/sections/reorder', authenticate, requireRole('admin', 'super_ad
 })
 
 // Update form configuration by formType (admin or super admin) - must come AFTER /:id routes
-router.put('/type/:formType', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
+router.put('/type/:formType', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
     try {
         const { formType } = req.params
         const { formName, description, sections, isActive } = req.body

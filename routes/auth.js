@@ -246,7 +246,7 @@ router.get('/me', authenticate, async (req, res) => {
 })
 
 // Check uniqueness of employee fields
-router.post('/users/check-uniqueness', authenticate, requireRole('admin'), async (req, res) => {
+router.post('/users/check-uniqueness', authenticate, requireRole('admin', 'hr'), async (req, res) => {
   try {
     const { field, value, excludeUserId } = req.body
     
@@ -295,7 +295,7 @@ router.post('/users/check-uniqueness', authenticate, requireRole('admin'), async
 })
 
 // Admin: create users with specific roles (supports draft creation for section-by-section save)
-router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
+router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res) => {
   try {
     const { firstName, email, phone, employeeId, officialEmail, role = 'employee', password, username, loginUsername, fullName, lastName, assignedProjects, draft, ...otherFields } = req.body
 
@@ -531,7 +531,7 @@ router.post('/users', authenticate, requireRole('admin'), async (req, res) => {
 })
 
 // Admin: list users (basic)
-router.get('/users', authenticate, requireRole('admin', 'c-suite'), async (_req, res) => {
+router.get('/users', authenticate, requireRole('admin', 'c-suite', 'hr'), async (_req, res) => {
   try {
     const users = await User.find().select('-password')
 
@@ -569,8 +569,8 @@ router.get('/users', authenticate, requireRole('admin', 'c-suite'), async (_req,
   }
 })
 
-// Admin: get single user by ID
-router.get('/users/:id', authenticate, requireRole('admin'), async (req, res) => {
+// Admin/HR: get single user by ID
+router.get('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password')
     if (!user) {
@@ -654,8 +654,8 @@ router.get('/users/:id/avatar', async (req, res) => {
   }
 })
 
-// Admin: upload profile image to GridFS. Must be before PUT /users/:id
-router.put('/users/:id/avatar', authenticate, requireRole('admin'), upload.single('avatar'), async (req, res) => {
+// Admin/HR: upload profile image to GridFS. Must be before PUT /users/:id
+router.put('/users/:id/avatar', authenticate, requireRole('admin', 'hr'), upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No image file provided. Use field name "avatar".' })
@@ -721,8 +721,8 @@ router.put('/users/:id/avatar', authenticate, requireRole('admin'), upload.singl
   }
 })
 
-// Admin: update user
-router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) => {
+// Admin/HR: update user
+router.put('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, res) => {
   try {
     const { firstName, email, phone, employeeId, officialEmail, role, password, username, loginUsername, fullName, lastName, middleName, isActive, assignedProjects, ...otherFields } = req.body
 
@@ -939,8 +939,8 @@ router.put('/users/:id', authenticate, requireRole('admin'), async (req, res) =>
   }
 })
 
-// Admin: delete user
-router.delete('/users/:id', authenticate, requireRole('admin'), async (req, res) => {
+// Admin/HR: delete user
+router.delete('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, res) => {
   try {
     const user = await User.findById(req.params.id)
     if (!user) {
