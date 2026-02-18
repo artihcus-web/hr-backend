@@ -24,7 +24,7 @@ router.post('/access-requests', async (req, res) => {
       return res.status(404).json({ message: 'Employee not found. Please check your Employee ID.' })
     }
 
-    // Check for existing pending request
+    // Check for existing pending request (one at a time per employee)
     const existing = await AssessmentAccessRequest.findOne({
       employeeId: user.employeeId || trimmedId,
       status: 'pending'
@@ -33,19 +33,7 @@ router.post('/access-requests', async (req, res) => {
       return res.status(400).json({ message: 'You already have a pending access request.' })
     }
 
-    // Check if already approved
-    const approved = await AssessmentAccessRequest.findOne({
-      $or: [{ employeeId: user.employeeId }, { employeeId: trimmedId }],
-      status: 'approved'
-    }).sort({ approvedAt: -1 })
-    if (approved) {
-      return res.status(200).json({
-        message: 'You already have access.',
-        status: 'approved',
-        requestId: approved._id
-      })
-    }
-
+    // Each new session requires fresh approval - no auto-access for previously approved users
     const request = new AssessmentAccessRequest({
       employeeId: user.employeeId || trimmedId
     })
