@@ -18,6 +18,7 @@ import adminControllersRoutes from './routes/adminControllers.js'
 import User from './models/User.js'
 import policiesRoutes from './routes/policies.js'
 import conferenceHallRoutes from './routes/conferenceHall.js'
+import assessmentsRoutes from './routes/assessments.js'
 
 // CI/CD auto-deployment: Builds Docker image, pushes to Docker Hub, deploys to server
 // Last auto-deployed: SUCCESS! Heredoc with EOF - Auto-deployment fully working!
@@ -29,6 +30,7 @@ const app = express()
 const defaultOrigins = [
   'https://hr.artihcus.com',
   'https://ticket.artihcus.com',
+  'https://assessments.artihcus.com',
   'https://fer-henna-omega.vercel.app',
   'http://localhost:5175',
   'http://localhost:5173',
@@ -92,6 +94,14 @@ app.use('/api/grievance', grievanceRoutes)
 app.use('/api/form-config', formConfigRoutes)
 app.use('/api/admin/controllers', adminControllersRoutes)
 app.use('/api/policies', policiesRoutes)
+// Assessments: explicit CORS for assessments.artihcus.com (handles proxy/preflight issues)
+const assessmentsCors = cors({
+  origin: ['https://assessments.artihcus.com', 'http://localhost:5173', 'http://localhost:5174'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+})
+app.use('/api/assessments', assessmentsCors, assessmentsRoutes)
 // Health check route
 app.get('/api/health', (_req, res) => {
   res.json({
