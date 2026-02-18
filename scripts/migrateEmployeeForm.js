@@ -144,7 +144,7 @@ const employeeFormConfig = {
                 { name: 'percentage', label: 'Percentage / CGPA', type: 'text', required: false, order: 4, width: 'third', isActive: true, placeholder: 'e.g. 85% or 8.5' },
                 { name: 'fromDate', label: 'From', type: 'date', required: false, order: 5, width: 'third', isActive: true },
                 { name: 'toDate', label: 'To', type: 'date', required: false, order: 6, width: 'third', isActive: true },
-                { name: 'attachment', label: 'Attachment', type: 'file', required: false, order: 7, width: 'full', isActive: true }
+                { name: 'attachment', label: 'Attachment', type: 'file', required: false, order: 7, width: 'full', helpText: 'PDF only (.pdf) – Please attach only PDF files here.', isActive: true }
             ]
         },
         {
@@ -172,7 +172,8 @@ const employeeFormConfig = {
                 { name: 'organization', label: 'Organization', type: 'text', required: false, order: 0, width: 'half', isActive: true, placeholder: 'Enter Organization Name' },
                 { name: 'designation', label: 'Position / Designation', type: 'text', required: false, order: 1, width: 'half', isActive: true, placeholder: 'Enter Designation' },
                 { name: 'fromDate', label: 'From', type: 'date', required: false, order: 2, width: 'half', isActive: true },
-                { name: 'toDate', label: 'To', type: 'date', required: false, order: 3, width: 'half', isActive: true }
+                { name: 'toDate', label: 'To', type: 'date', required: false, order: 3, width: 'half', isActive: true },
+                { name: 'attachments', label: 'Attachments', type: 'file', required: false, order: 4, width: 'full', helpText: 'PDF only. You can add multiple attachments (e.g. experience letter, payslips).', isActive: true }
             ]
         },
         {
@@ -206,7 +207,7 @@ const employeeFormConfig = {
             fields: [
                 { name: 'documentType', label: 'Document Type', type: 'select', required: true, options: ['Aadhar Card', 'PAN Card', 'Passport', 'Driving License', 'Voter ID', 'Other'], order: 0, width: 'third', isActive: true },
                 { name: 'documentNumber', label: 'Document Number', type: 'text', required: true, order: 1, width: 'third', isActive: true, placeholder: 'Enter Number' },
-                { name: 'attachment', label: 'Attachment', type: 'file', required: false, order: 2, width: 'third', isActive: true }
+                { name: 'attachment', label: 'Attachment', type: 'file', required: false, order: 2, width: 'third', helpText: 'PDF only (.pdf) – Please attach only PDF files here.', isActive: true }
             ]
         },
         {
