@@ -29,6 +29,7 @@ const app = express()
 const defaultOrigins = [
   'https://hr.artihcus.com',
   'https://ticket.artihcus.com',
+  'https://assessments.artihcus.com',
   'https://fer-henna-omega.vercel.app',
   'http://localhost:5175',
   'http://localhost:5173',
