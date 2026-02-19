@@ -1,9 +1,23 @@
 import express from 'express'
+import multer from 'multer'
 import AssessmentAccessRequest from '../models/AssessmentAccessRequest.js'
+import AssessmentModule from '../models/AssessmentModule.js'
+import AssessmentQuestion from '../models/AssessmentQuestion.js'
 import User from '../models/User.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
+import XLSX from 'xlsx'
+import { parseAssessmentExcel } from '../utils/parseAssessmentExcel.js'
 
 const router = express.Router()
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.originalname?.toLowerCase().endsWith('.xlsx')
+    cb(null, !!ok)
+  }
+})
 
 // Public: Submit access request (from assessments app)
 router.post('/access-requests', async (req, res) => {
@@ -171,6 +185,267 @@ router.put('/access-requests/:id/reject', authenticate, requireRole('admin', 'su
     })
   } catch (error) {
     console.error('Reject access request error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ========== Modules (admin + public for test-taking) ==========
+
+// Public: Download Excel template for questions upload
+router.get('/questions-template', (_req, res) => {
+  try {
+    const rows = [
+      ['SECTION', 'TYPE', 'QUESTION', 'OPTION_A', 'OPTION_B', 'OPTION_C', 'OPTION_D', 'CORRECT_ANSWER'],
+      ['Multiple Choice', 'mcq', 'What is 2+2?', '3', '4', '5', '6', 'B'],
+      ['Yes or No', 'yes_no', 'Is the sky blue?', 'Yes', 'No', '', '', 'Yes'],
+      ['Fill in the Blanks', 'fill_blanks', 'The capital of India is _____.', '', '', '', '', 'New Delhi'],
+      ['Short Answer', 'short_answer', 'Name one planet.', '', '', '', '', 'Earth|Mars|Jupiter'],
+      ['Long Answer', 'long_answer', 'Describe the water cycle in one sentence.', '', '', '', '', 'Water evaporates, condenses, and falls as rain.']
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Questions')
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', 'attachment; filename=assessment_questions_template.xlsx')
+    res.send(buf)
+  } catch (error) {
+    console.error('Template download error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Public: List modules (for assessments app – select module to take test)
+router.get('/modules', async (req, res) => {
+  try {
+    const modules = await AssessmentModule.find({}).sort({ createdAt: -1 }).lean()
+    res.json({ modules: modules.map(m => ({ _id: m._id, id: m._id, name: m.name, description: m.description || '' })) })
+  } catch (error) {
+    console.error('List modules error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Create module
+router.post('/modules', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const { name, description } = req.body
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ message: 'Module name is required' })
+    }
+    const module = new AssessmentModule({
+      name: String(name).trim(),
+      description: description ? String(description).trim() : ''
+    })
+    await module.save()
+    res.status(201).json({ module: { _id: module._id, id: module._id, name: module.name, description: module.description } })
+  } catch (error) {
+    console.error('Create module error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Public: Get single module (for assessments app)
+router.get('/modules/:id', async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.id).lean()
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    res.json({ module: { _id: module._id, id: module._id, name: module.name, description: module.description } })
+  } catch (error) {
+    console.error('Get module error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Delete module (and its questions)
+router.delete('/modules/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const module = await AssessmentModule.findByIdAndDelete(req.params.id)
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    await AssessmentQuestion.deleteMany({ moduleId: req.params.id })
+    res.json({ message: 'Module deleted' })
+  } catch (error) {
+    console.error('Delete module error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Public: Get module settings (for test-taking)
+router.get('/modules/:id/settings', async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.id).select('settings').lean()
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    res.json({ settings: module.settings || {} })
+  } catch (error) {
+    console.error('Get settings error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Update module settings
+router.put('/modules/:id/settings', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.id)
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const s = req.body || {}
+    if (!module.settings) module.settings = {}
+    if (s.durationMinutes != null) module.settings.durationMinutes = Number(s.durationMinutes) || 60
+    if (s.totalQuestions != null) module.settings.totalQuestions = Math.max(1, Number(s.totalQuestions) || 20)
+    if (s.passingScore != null) module.settings.passingScore = Math.min(100, Math.max(0, Number(s.passingScore) || 70))
+    if (s.shuffleQuestions != null) module.settings.shuffleQuestions = !!s.shuffleQuestions
+    if (s.shuffleOptions != null) module.settings.shuffleOptions = !!s.shuffleOptions
+    if (s.showResults != null) module.settings.showResults = !!s.showResults
+    if (s.allowRetake != null) module.settings.allowRetake = !!s.allowRetake
+    if (s.rules != null) module.settings.rules = String(s.rules)
+    await module.save()
+    res.json({ settings: module.settings })
+  } catch (error) {
+    console.error('Update settings error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Get module questions (full, with correct answers – for admin UI)
+router.get('/modules/:id/questions', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const questions = await AssessmentQuestion.find({ moduleId: req.params.id }).sort({ order: 1 }).lean()
+    res.json({ questions })
+  } catch (error) {
+    console.error('Get questions error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Upload Excel – parse and save questions (replace existing for this module)
+router.post('/modules/:id/questions/upload', authenticate, requireRole('admin', 'super_admin', 'hr'), upload.single('file'), async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.id)
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'Please upload an Excel file (.xlsx)' })
+    }
+    const { questions: parsed, errors } = parseAssessmentExcel(req.file.buffer)
+    if (parsed.length === 0 && errors.length > 0) {
+      return res.status(400).json({ message: 'No valid questions found', errors })
+    }
+    await AssessmentQuestion.deleteMany({ moduleId: req.params.id })
+    const toInsert = parsed.map((q, i) => ({
+      moduleId: module._id,
+      section: q.section,
+      type: q.type,
+      text: q.text,
+      options: q.options,
+      correctAnswer: q.correctAnswer,
+      order: q.order !== undefined ? q.order : i
+    }))
+    if (toInsert.length > 0) {
+      await AssessmentQuestion.insertMany(toInsert)
+    }
+    res.json({
+      message: `Uploaded ${parsed.length} question(s)`,
+      count: parsed.length,
+      errors: errors.length > 0 ? errors : undefined
+    })
+  } catch (error) {
+    console.error('Upload questions error:', error)
+    res.status(500).json({ message: error.message || 'Server error' })
+  }
+})
+
+// Public: Get test data (module + settings + questions without correctAnswer) for taking the test
+router.get('/modules/:id/test', async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.id).lean()
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const settings = module.settings || {}
+    let questions = await AssessmentQuestion.find({ moduleId: req.params.id }).sort({ order: 1 }).lean()
+    const totalWanted = Math.max(1, settings.totalQuestions || 20)
+    if (settings.shuffleQuestions) {
+      for (let i = questions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [questions[i], questions[j]] = [questions[j], questions[i]]
+      }
+    }
+    questions = questions.slice(0, totalWanted)
+    if (settings.shuffleOptions && questions.length > 0) {
+      questions = questions.map(q => {
+        if (!q.options || q.options.length < 2) return q
+        const opts = [...q.options]
+        for (let i = opts.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [opts[i], opts[j]] = [opts[j], opts[i]]
+        }
+        return { ...q, options: opts }
+      })
+    }
+    const safe = questions.map(q => {
+      const { correctAnswer, ...rest } = q
+      return rest
+    })
+    res.json({
+      module: { _id: module._id, name: module.name, description: module.description },
+      settings: {
+        durationMinutes: settings.durationMinutes || 60,
+        passingScore: settings.passingScore || 70,
+        showResults: settings.showResults !== false,
+        rules: settings.rules || ''
+      },
+      questions: safe
+    })
+  } catch (error) {
+    console.error('Get test error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Public: Submit test answers and get score
+router.post('/modules/:id/submit', async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.id).lean()
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const settings = module.settings || {}
+    const { answers } = req.body || {}
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({ message: 'answers array is required' })
+    }
+    const questionIds = answers.map(a => a.questionId)
+    const questions = await AssessmentQuestion.find({ _id: { $in: questionIds }, moduleId: req.params.id }).lean()
+    const byId = Object.fromEntries(questions.map(q => [String(q._id), q]))
+    let correctCount = 0
+    for (const a of answers) {
+      const q = byId[a.questionId]
+      if (!q) continue
+      const userVal = (a.value != null ? String(a.value).trim() : '')
+      const userLower = userVal.toLowerCase()
+      const correct = (q.correctAnswer || '').trim()
+      const correctLower = correct.toLowerCase()
+      if (q.type === 'mcq' || q.type === 'yes_no') {
+        let correctLabel = correct
+        if (['a', 'b', 'c', 'd'].includes(correctLower)) {
+          correctLabel = correctLower
+        } else {
+          const opt = (q.options || []).find(o => (o.text || '').toLowerCase() === correctLower)
+          if (opt?.label) correctLabel = opt.label.toLowerCase()
+        }
+        if (userLower === correctLabel) correctCount++
+      } else {
+        const accepted = correct.split('|').map(s => s.trim().toLowerCase()).filter(Boolean)
+        if (accepted.length && accepted.includes(userLower)) correctCount++
+        else if (userLower === correctLower) correctCount++
+      }
+    }
+    const total = questions.length
+    const percent = total ? Math.round((correctCount / total) * 100) : 0
+    const passingScore = settings.passingScore != null ? Number(settings.passingScore) : 70
+    res.json({
+      score: percent,
+      correctCount,
+      total,
+      passed: percent >= passingScore,
+      showResults: settings.showResults !== false
+    })
+  } catch (error) {
+    console.error('Submit test error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
