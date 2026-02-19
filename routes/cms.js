@@ -1,9 +1,35 @@
 import express from 'express'
+import multer from 'multer'
+import mongoose from 'mongoose'
+import { GridFSBucket } from 'mongodb'
 import SiteSettings from '../models/SiteSettings.js'
 import Holiday from '../models/Holiday.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 
 const router = express.Router()
+
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/jpg'].includes(file.mimetype)) return cb(null, true)
+    cb(new Error('Logo must be PNG or JPEG'))
+  }
+})
+
+const faviconUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 512 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/svg+xml') return cb(null, true)
+    cb(new Error('Favicon must be SVG'))
+  }
+})
+
+function getCmsBucket() {
+  const db = mongoose.connection.db
+  return db ? new GridFSBucket(db, { bucketName: 'cmsAssets' }) : null
+}
 
 const DEFAULT_SETTINGS = {
   sidebarLogoUrl: '',
@@ -131,6 +157,98 @@ router.delete('/holidays/:id', authenticate, requireRole('admin', 'super_admin')
   } catch (error) {
     console.error('DELETE /cms/holidays/:id error:', error)
     res.status(500).json({ message: 'Failed to delete holiday' })
+  }
+})
+
+// GET serve CMS asset (logo or favicon) from GridFS – public
+router.get('/assets/:type', async (req, res) => {
+  try {
+    const type = req.params.type === 'logo' ? 'cms_logo' : req.params.type === 'favicon' ? 'cms_favicon' : null
+    if (!type) return res.status(400).json({ message: 'Invalid asset type' })
+    const bucket = getCmsBucket()
+    if (!bucket) return res.status(503).json({ message: 'Storage not available' })
+    const cursor = bucket.find({ 'metadata.assetType': type }).sort({ uploadDate: -1 }).limit(1)
+    const files = await cursor.toArray()
+    if (!files.length) return res.status(404).json({ message: 'Asset not found' })
+    res.set('Content-Type', files[0].contentType || (type === 'cms_favicon' ? 'image/svg+xml' : 'image/png'))
+    const stream = bucket.openDownloadStream(files[0]._id)
+    stream.pipe(res)
+    stream.on('error', (_err) => {
+      if (!res.headersSent) res.status(500).json({ message: 'Error streaming asset' })
+    })
+  } catch (error) {
+    console.error('GET /cms/assets/:type error:', error)
+    if (!res.headersSent) res.status(500).json({ message: 'Failed to serve asset' })
+  }
+})
+
+// POST upload logo (admin only) – PNG/JPEG
+router.post('/upload/logo', authenticate, requireRole('admin', 'super_admin'), (req, res, next) => {
+  logoUpload.single('logo')(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.message || 'Invalid logo file' })
+    next()
+  })
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file. Use field name "logo".' })
+    const bucket = getCmsBucket()
+    if (!bucket) return res.status(503).json({ message: 'Storage not available' })
+    const cursor = bucket.find({ 'metadata.assetType': 'cms_logo' })
+    const existing = await cursor.toArray()
+    for (const f of existing) {
+      try { await bucket.delete(f._id) } catch { /* ignore */ }
+    }
+    const filename = `logo-${Date.now()}.${req.file.mimetype === 'image/png' ? 'png' : 'jpg'}`
+    const uploadStream = bucket.openUploadStream(filename, {
+      contentType: req.file.mimetype,
+      metadata: { assetType: 'cms_logo' }
+    })
+    uploadStream.end(req.file.buffer)
+    await new Promise((resolve, reject) => {
+      uploadStream.on('finish', resolve)
+      uploadStream.on('error', reject)
+    })
+    const url = '/api/cms/assets/logo'
+    const doc = await SiteSettings.findOneAndUpdate({}, { $set: { sidebarLogoUrl: url, updatedBy: req.user._id } }, { new: true, upsert: true })
+    res.json({ url, settings: { sidebarLogoUrl: doc.sidebarLogoUrl, appName: doc.appName, faviconUrl: doc.faviconUrl, holidayCalendarTitle: doc.holidayCalendarTitle, holidayCalendarSubtitle: doc.holidayCalendarSubtitle } })
+  } catch (error) {
+    console.error('POST /cms/upload/logo error:', error)
+    res.status(500).json({ message: 'Failed to upload logo' })
+  }
+})
+
+// POST upload favicon (admin only) – SVG
+router.post('/upload/favicon', authenticate, requireRole('admin', 'super_admin'), (req, res, next) => {
+  faviconUpload.single('favicon')(req, res, (err) => {
+    if (err) return res.status(400).json({ message: err.message || 'Invalid favicon file' })
+    next()
+  })
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file. Use field name "favicon".' })
+    const bucket = getCmsBucket()
+    if (!bucket) return res.status(503).json({ message: 'Storage not available' })
+    const cursor = bucket.find({ 'metadata.assetType': 'cms_favicon' })
+    const existing = await cursor.toArray()
+    for (const f of existing) {
+      try { await bucket.delete(f._id) } catch { /* ignore */ }
+    }
+    const filename = `favicon-${Date.now()}.svg`
+    const uploadStream = bucket.openUploadStream(filename, {
+      contentType: 'image/svg+xml',
+      metadata: { assetType: 'cms_favicon' }
+    })
+    uploadStream.end(req.file.buffer)
+    await new Promise((resolve, reject) => {
+      uploadStream.on('finish', resolve)
+      uploadStream.on('error', reject)
+    })
+    const url = '/api/cms/assets/favicon'
+    const doc = await SiteSettings.findOneAndUpdate({}, { $set: { faviconUrl: url, updatedBy: req.user._id } }, { new: true, upsert: true })
+    res.json({ url, settings: { sidebarLogoUrl: doc.sidebarLogoUrl, appName: doc.appName, faviconUrl: doc.faviconUrl, holidayCalendarTitle: doc.holidayCalendarTitle, holidayCalendarSubtitle: doc.holidayCalendarSubtitle } })
+  } catch (error) {
+    console.error('POST /cms/upload/favicon error:', error)
+    res.status(500).json({ message: 'Failed to upload favicon' })
   }
 })
 
