@@ -14,6 +14,7 @@ const menuItemsData = [
   { id: 'admin-dashboard', label: 'Admin Dashboard', path: '/admin', roles: ['admin'] },
   { id: 'project-management', label: 'Project Management', path: '/admin/projects', roles: ['admin'] },
   { id: 'admin-controllers', label: 'Admin Controllers', path: '/admin/controllers', roles: ['admin'] },
+  { id: 'admin-cms', label: 'Content & Branding', path: '/admin/cms', roles: ['admin'] },
   { id: 'conference-hall-admin', label: 'Conference Hall', path: '/conference-hall', roles: ['admin'] },
   { id: 'admin-policies', label: 'Policies', path: '/admin/policies', roles: ['admin', 'hr'] },
   { id: 'admin-assessments', label: 'Assessments', path: '/admin/assessments', roles: ['admin', 'hr'] },

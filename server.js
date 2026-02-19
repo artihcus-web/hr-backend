@@ -19,6 +19,7 @@ import User from './models/User.js'
 import policiesRoutes from './routes/policies.js'
 import conferenceHallRoutes from './routes/conferenceHall.js'
 import assessmentsRoutes from './routes/assessments.js'
+import cmsRoutes from './routes/cms.js'
 
 // CI/CD auto-deployment: Builds Docker image, pushes to Docker Hub, deploys to server
 // Last auto-deployed: SUCCESS! Heredoc with EOF - Auto-deployment fully working!
@@ -93,6 +94,7 @@ app.use('/api/conference-hall', conferenceHallRoutes)
 app.use('/api/grievance', grievanceRoutes)
 app.use('/api/form-config', formConfigRoutes)
 app.use('/api/admin/controllers', adminControllersRoutes)
+app.use('/api/cms', cmsRoutes)
 app.use('/api/policies', policiesRoutes)
 // Assessments: explicit CORS for assessments.artihcus.com (handles proxy/preflight issues)
 const assessmentsCors = cors({
