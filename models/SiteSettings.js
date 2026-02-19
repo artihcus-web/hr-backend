@@ -8,6 +8,8 @@ const siteSettingsSchema = new mongoose.Schema({
   // Holiday Calendar page
   holidayCalendarTitle: { type: String, default: 'Holiday Calendar' },
   holidayCalendarSubtitle: { type: String, default: 'Organization holidays' },
+  // Years for which admin has saved holidays (so users see "updated" vs "not updated yet")
+  holidayYearsPublished: { type: [Number], default: [] },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true })
 

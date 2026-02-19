@@ -36,7 +36,8 @@ const DEFAULT_SETTINGS = {
   appName: 'Artihcus',
   faviconUrl: '',
   holidayCalendarTitle: 'Holiday Calendar',
-  holidayCalendarSubtitle: 'Organization holidays'
+  holidayCalendarSubtitle: 'Organization holidays',
+  holidayYearsPublished: []
 }
 
 // GET site settings (public or authenticated - no sensitive data)
@@ -52,7 +53,8 @@ router.get('/settings', async (req, res) => {
         appName: doc.appName || DEFAULT_SETTINGS.appName,
         faviconUrl: doc.faviconUrl || DEFAULT_SETTINGS.faviconUrl,
         holidayCalendarTitle: doc.holidayCalendarTitle || DEFAULT_SETTINGS.holidayCalendarTitle,
-        holidayCalendarSubtitle: doc.holidayCalendarSubtitle || DEFAULT_SETTINGS.holidayCalendarSubtitle
+        holidayCalendarSubtitle: doc.holidayCalendarSubtitle || DEFAULT_SETTINGS.holidayCalendarSubtitle,
+        holidayYearsPublished: Array.isArray(doc.holidayYearsPublished) ? doc.holidayYearsPublished : []
       }
     })
   } catch (error) {
@@ -105,6 +107,21 @@ router.get('/holidays', authenticate, async (req, res) => {
   }
 })
 
+async function markYearPublished(year) {
+  const y = parseInt(year, 10)
+  if (Number.isNaN(y)) return
+  await SiteSettings.findOneAndUpdate({}, { $addToSet: { holidayYearsPublished: y } }, { upsert: true })
+}
+
+async function unmarkYearIfEmpty(year) {
+  const y = parseInt(year, 10)
+  if (Number.isNaN(y)) return
+  const count = await Holiday.countDocuments({ year: y })
+  if (count === 0) {
+    await SiteSettings.findOneAndUpdate({}, { $pull: { holidayYearsPublished: y } }, { upsert: true })
+  }
+}
+
 // POST create holiday (admin only)
 router.post('/holidays', authenticate, requireRole('admin', 'super_admin'), async (req, res) => {
   try {
@@ -120,6 +137,7 @@ router.post('/holidays', authenticate, requireRole('admin', 'super_admin'), asyn
       description: description ? String(description).trim() : '',
       updatedBy: req.user._id
     })
+    await markYearPublished(year)
     res.status(201).json({ holiday: doc })
   } catch (error) {
     console.error('POST /cms/holidays error:', error)
@@ -141,6 +159,7 @@ router.put('/holidays/:id', authenticate, requireRole('admin', 'super_admin'), a
 
     const doc = await Holiday.findByIdAndUpdate(req.params.id, { $set: update }, { new: true })
     if (!doc) return res.status(404).json({ message: 'Holiday not found' })
+    await markYearPublished(doc.year)
     res.json({ holiday: doc })
   } catch (error) {
     console.error('PUT /cms/holidays/:id error:', error)
@@ -153,6 +172,7 @@ router.delete('/holidays/:id', authenticate, requireRole('admin', 'super_admin')
   try {
     const doc = await Holiday.findByIdAndDelete(req.params.id)
     if (!doc) return res.status(404).json({ message: 'Holiday not found' })
+    await unmarkYearIfEmpty(doc.year)
     res.json({ message: 'Holiday deleted' })
   } catch (error) {
     console.error('DELETE /cms/holidays/:id error:', error)
