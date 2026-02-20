@@ -1,8 +1,12 @@
 import express from 'express'
 import multer from 'multer'
+import mongoose from 'mongoose'
+import { GridFSBucket } from 'mongodb'
+import { ObjectId } from 'mongodb'
 import AssessmentAccessRequest from '../models/AssessmentAccessRequest.js'
 import AssessmentModule from '../models/AssessmentModule.js'
 import AssessmentQuestion from '../models/AssessmentQuestion.js'
+import AssessmentKnowledgeNote from '../models/AssessmentKnowledgeNote.js'
 import User from '../models/User.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import XLSX from 'xlsx'
@@ -18,6 +22,27 @@ const upload = multer({
     cb(null, !!ok)
   }
 })
+
+const notesUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ]
+    const ok = allowed.includes(file.mimetype) ||
+      /\.(pdf|doc|docx|txt)$/i.test(file.originalname || '')
+    cb(null, !!ok)
+  }
+})
+
+function getAssessmentNotesBucket() {
+  const db = mongoose.connection.db
+  return db ? new GridFSBucket(db, { bucketName: 'assessmentNotes' }) : null
+}
 
 // Public: Submit access request (from assessments app)
 router.post('/access-requests', async (req, res) => {
@@ -257,12 +282,25 @@ router.get('/modules/:id', async (req, res) => {
   }
 })
 
-// Admin: Delete module (and its questions)
+// Admin: Delete module (and its questions and knowledge notes)
 router.delete('/modules/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
-    const module = await AssessmentModule.findByIdAndDelete(req.params.id)
+    const module = await AssessmentModule.findById(req.params.id)
     if (!module) return res.status(404).json({ message: 'Module not found' })
+    const notes = await AssessmentKnowledgeNote.find({ moduleId: req.params.id }).lean()
+    const bucket = getAssessmentNotesBucket()
+    if (bucket) {
+      for (const note of notes) {
+        try {
+          await bucket.delete(note.gridFsFileId)
+        } catch (e) {
+          console.warn('GridFS delete note file:', e.message)
+        }
+      }
+    }
+    await AssessmentKnowledgeNote.deleteMany({ moduleId: req.params.id })
     await AssessmentQuestion.deleteMany({ moduleId: req.params.id })
+    await AssessmentModule.findByIdAndDelete(req.params.id)
     res.json({ message: 'Module deleted' })
   } catch (error) {
     console.error('Delete module error:', error)
@@ -447,6 +485,129 @@ router.post('/modules/:id/submit', async (req, res) => {
     })
   } catch (error) {
     console.error('Submit test error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ========== Knowledge Base (notes per module) ==========
+
+// Public: List knowledge base notes (optional ?moduleId= for filter)
+router.get('/knowledge-base', async (req, res) => {
+  try {
+    const { moduleId } = req.query
+    const filter = {}
+    if (moduleId) filter.moduleId = moduleId
+    const notes = await AssessmentKnowledgeNote.find(filter)
+      .populate('moduleId', 'name')
+      .sort({ createdAt: -1 })
+      .lean()
+    const items = notes.map(n => ({
+      _id: n._id,
+      id: n._id,
+      moduleId: n.moduleId?._id || n.moduleId,
+      moduleName: n.moduleId?.name || '',
+      title: n.title || n.fileName,
+      fileName: n.fileName,
+      mimeType: n.mimeType,
+      createdAt: n.createdAt
+    }))
+    res.json({ items })
+  } catch (error) {
+    console.error('List knowledge base error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Upload a notes document for a module
+router.post('/knowledge-base', authenticate, requireRole('admin', 'super_admin', 'hr'), notesUpload.single('file'), async (req, res) => {
+  try {
+    const moduleId = req.body.moduleId || req.body.module
+    if (!moduleId) {
+      return res.status(400).json({ message: 'Module is required' })
+    }
+    const module = await AssessmentModule.findById(moduleId)
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'Please upload a file (PDF, DOC, DOCX, or TXT)' })
+    }
+    const bucket = getAssessmentNotesBucket()
+    if (!bucket) return res.status(503).json({ message: 'File storage unavailable' })
+    const title = (req.body.title || '').trim() || req.file.originalname || 'Note'
+    const filename = `${moduleId}-${Date.now()}-${(req.file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const uploadStream = bucket.openUploadStream(filename, {
+      metadata: { moduleId: String(moduleId), title }
+    })
+    uploadStream.end(req.file.buffer)
+    await new Promise((resolve, reject) => {
+      uploadStream.on('finish', resolve)
+      uploadStream.on('error', reject)
+    })
+    const note = new AssessmentKnowledgeNote({
+      moduleId,
+      title,
+      fileName: req.file.originalname || filename,
+      mimeType: req.file.mimetype || 'application/octet-stream',
+      gridFsFileId: uploadStream.id
+    })
+    await note.save()
+    res.status(201).json({
+      message: 'Note uploaded',
+      item: {
+        _id: note._id,
+        id: note._id,
+        moduleId: note.moduleId,
+        moduleName: module.name,
+        title: note.title,
+        fileName: note.fileName,
+        mimeType: note.mimeType,
+        createdAt: note.createdAt
+      }
+    })
+  } catch (error) {
+    console.error('Upload knowledge base error:', error)
+    res.status(500).json({ message: error.message || 'Server error' })
+  }
+})
+
+// Public: Download / view a knowledge base note (stream from GridFS)
+router.get('/knowledge-base/:id/download', async (req, res) => {
+  try {
+    const note = await AssessmentKnowledgeNote.findById(req.params.id).populate('moduleId', 'name').lean()
+    if (!note) return res.status(404).json({ message: 'Note not found' })
+    const bucket = getAssessmentNotesBucket()
+    if (!bucket) return res.status(503).json({ message: 'File storage unavailable' })
+    const fileId = note.gridFsFileId && (note.gridFsFileId._id || note.gridFsFileId)
+    const oid = fileId instanceof ObjectId ? fileId : new ObjectId(String(fileId))
+    const files = await bucket.find({ _id: oid }).toArray()
+    if (!files.length) return res.status(404).json({ message: 'File not found' })
+    const safeName = (note.fileName || 'download').replace(/[^a-zA-Z0-9._-]/g, '_')
+    res.setHeader('Content-Type', note.mimeType || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`)
+    const downloadStream = bucket.openDownloadStream(oid)
+    downloadStream.pipe(res)
+  } catch (error) {
+    console.error('Download knowledge base error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Delete a knowledge base note
+router.delete('/knowledge-base/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const note = await AssessmentKnowledgeNote.findById(req.params.id)
+    if (!note) return res.status(404).json({ message: 'Note not found' })
+    const bucket = getAssessmentNotesBucket()
+    if (bucket) {
+      try {
+        await bucket.delete(note.gridFsFileId)
+      } catch (e) {
+        console.warn('GridFS delete error:', e.message)
+      }
+    }
+    await AssessmentKnowledgeNote.findByIdAndDelete(req.params.id)
+    res.json({ message: 'Note deleted' })
+  } catch (error) {
+    console.error('Delete knowledge base error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
