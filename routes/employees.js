@@ -25,17 +25,22 @@ router.get('/', authenticate, async (req, res) => {
     }
 })
  
-// Get employee by ID
+// Get employee by ID (full profile for Know Your Employee detail view)
 router.get('/:id', async (req, res) => {
     try {
         const employee = await User.findById(req.params.id)
             .select('-password -__v')
             .populate('assignedProjects', 'projectName projectId status')
+            .lean()
  
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found' })
         }
         
+        // Ensure designation is always present in response (from employee form field)
+        if (!Object.prototype.hasOwnProperty.call(employee, 'designation')) {
+            employee.designation = null
+        }
         // Transform profileImage GridFS ID to endpoint URL
         const transformedEmployee = transformProfileImage(employee)
  

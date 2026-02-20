@@ -5,26 +5,29 @@ import { ObjectId } from 'mongodb'
  * Backend stores GridFS ObjectId; API returns /api/auth/users/:id/avatar for consistency.
  */
 export function transformProfileImage(user) {
-  if (!user || !user.profileImage) return user
+  if (!user) return user
+  try {
+    const userObj = user.toObject ? user.toObject() : { ...user }
+    if (!userObj._id) return userObj
+    if (!userObj.profileImage) return userObj
 
-  const userObj = user.toObject ? user.toObject() : { ...user }
+    // Already endpoint path - ensure consistency
+    if (typeof userObj.profileImage === 'string' && userObj.profileImage.includes('/avatar')) {
+      if (!userObj.profileImage.startsWith('/api/auth/users/')) {
+        userObj.profileImage = `/api/auth/users/${userObj._id}/avatar`
+      }
+      return userObj
+    }
 
-  if (!userObj._id) return userObj
-
-  // Already endpoint path - ensure consistency
-  if (typeof userObj.profileImage === 'string' && userObj.profileImage.includes('/avatar')) {
-    if (!userObj.profileImage.startsWith('/api/auth/users/')) {
+    // GridFS ObjectId - convert to endpoint (guard against non-string/non-ObjectId)
+    if (userObj.profileImage != null && ObjectId.isValid(userObj.profileImage)) {
       userObj.profileImage = `/api/auth/users/${userObj._id}/avatar`
     }
+
     return userObj
+  } catch {
+    return user.toObject ? user.toObject() : { ...user }
   }
-
-  // GridFS ObjectId - convert to endpoint
-  if (ObjectId.isValid(userObj.profileImage)) {
-    userObj.profileImage = `/api/auth/users/${userObj._id}/avatar`
-  }
-
-  return userObj
 }
 
 /**

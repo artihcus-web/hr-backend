@@ -411,11 +411,24 @@ router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res)
       return isNaN(num) ? undefined : num
     }
 
+    // Helper to convert string "Yes"/"No"/"true"/"false" to boolean (form/schema often send strings)
+    const parseBoolean = (value) => {
+      if (value === true || value === false) return value
+      if (value === undefined || value === null) return undefined
+      const s = String(value).trim().toLowerCase()
+      if (s === 'true' || s === 'yes' || s === '1' || s === 'on') return true
+      if (s === 'false' || s === 'no' || s === '0' || s === 'off' || s === '') return false
+      return undefined
+    }
+
     // Date fields that need conversion
     const dateFields = ['dateOfBirth', 'birthdayDate', 'marriageDate', 'joiningDate', 'confirmDate', 'completedOn', 'pfJoiningDate']
 
     // Number fields that need conversion
     const numberFields = ['probationPeriod', 'noticePeriod', 'salary', 'numberOfChildren']
+
+    // Boolean fields (form may send "Yes"/"No" or string "true"/"false")
+    const booleanFields = ['isPhysicallyChallenged', 'isInternationalEmployee', 'isEligibleForPF', 'eligibleForExcessEPFContribution', 'isEligibleForExcessEPSContribution', 'isExistingMemberOfPF', 'isEligibleForESI', 'isCoveredUnderLWF', 'isActive']
 
     // Build user data object (avoid email: null to prevent E11000 duplicate key on email index)
     const finalEmail = email && String(email).trim()
@@ -451,6 +464,14 @@ router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res)
         const parsed = parseNumber(userData[field])
         if (parsed !== undefined) userData[field] = parsed
         else delete userData[field]
+      }
+    })
+
+    // Convert boolean fields (accept "Yes"/"No", "true"/"false", 1/0)
+    booleanFields.forEach(field => {
+      if (userData[field] !== undefined && userData[field] !== null) {
+        const parsed = parseBoolean(userData[field])
+        if (parsed !== undefined) userData[field] = parsed
       }
     })
 
@@ -505,13 +526,18 @@ router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res)
       )
     }
 
-    // Log Activity
-    await ActivityLog.create({
-      user: req.user._id, // Admin who performed the action
-      action: 'CREATE_USER',
-      description: `Created new employee: ${user.fullName} (${user.role})`,
-      target: user._id.toString()
-    })
+    try {
+      if (req.user && req.user._id) {
+        await ActivityLog.create({
+          user: req.user._id,
+          action: 'CREATE_USER',
+          description: `Created new employee: ${user.fullName || user.username} (${user.role})`,
+          target: user._id.toString()
+        })
+      }
+    } catch (logErr) {
+      console.error('ActivityLog create failed:', logErr)
+    }
 
     res.status(201).json({
       message: 'Employee created successfully',
@@ -526,46 +552,70 @@ router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res)
     })
   } catch (error) {
     console.error('Create user error:', error)
-    res.status(500).json({ message: 'Server error while creating user', error: error.message })
+    const isDev = process.env.NODE_ENV === 'development'
+    if (error.name === 'ValidationError') {
+      const msg = error.message || 'Validation failed'
+      return res.status(400).json({ message: msg })
+    }
+    if (error.code === 11000) {
+      const field = error.keyPattern ? Object.keys(error.keyPattern)[0] : 'field'
+      return res.status(400).json({ message: `Duplicate value for ${field}` })
+    }
+    res.status(500).json({
+      message: 'Server error while creating user',
+      ...(isDev && { error: error.message })
+    })
   }
 })
 
 // Admin: list users (basic)
 router.get('/users', authenticate, requireRole('admin', 'c-suite', 'hr'), async (_req, res) => {
   try {
-    const users = await User.find().select('-password')
+    const users = await User.find().select('-password').lean()
+    const activeProjects = await Project.find({ status: { $in: ['active', 'In Progress'] } }).select('projectName employees projectManagers').lean()
+    const userList = Array.isArray(users) ? users : []
+    const projectList = Array.isArray(activeProjects) ? activeProjects : []
 
-    // Fetch all active projects to map valid current assignments
-    const activeProjects = await Project.find({ status: { $in: ['active', 'In Progress'] } }).select('projectName employees projectManagers')
+    const usersWithAssignments = userList.map(user => {
+      try {
+        const u = { ...user }
+        const userIdStr = u._id ? u._id.toString() : ''
+        if (!userIdStr) return transformProfileImage(u)
 
-    const usersWithAssignments = users.map(user => {
-      const u = user.toObject()
-      // Skip for admins to check efficiently
-      if (u.role === 'admin') {
-        return transformProfileImage({ ...u, _id: u._id })
-      }
-
-      u.currentAssignments = activeProjects.reduce((acc, p) => {
-        const isManager = p.projectManagers.some(id => id.toString() === user._id.toString())
-        const isEmployee = p.employees.some(id => id.toString() === user._id.toString())
-
-        if (isManager || isEmployee) {
-          acc.push({
-            projectName: p.projectName,
-            role: isManager ? 'Manager' : 'Member'
-          })
+        if (u.role === 'admin') {
+          return transformProfileImage(u)
         }
-        return acc
-      }, [])
-      
-      // Transform GridFS ID to endpoint URL
-      return transformProfileImage({ ...u, _id: u._id })
+
+        u.currentAssignments = projectList.reduce((acc, p) => {
+          try {
+            const managers = p.projectManagers || []
+            const employees = p.employees || []
+            const isManager = managers.some(id => id && id.toString() === userIdStr)
+            const isEmployee = employees.some(id => id && id.toString() === userIdStr)
+            if (isManager || isEmployee) {
+              acc.push({
+                projectName: p.projectName || '',
+                role: isManager ? 'Manager' : 'Member'
+              })
+            }
+          } catch { /* skip bad project */ }
+          return acc
+        }, [])
+
+        return transformProfileImage(u)
+      } catch (err) {
+        console.error('List users: transform error for user', user?._id, err.message)
+        return transformProfileImage(user ? { ...user } : {})
+      }
     })
 
     res.json({ users: usersWithAssignments })
   } catch (error) {
     console.error('List users error:', error)
-    res.status(500).json({ message: 'Server error while listing users' })
+    res.status(500).json({
+      message: 'Server error while listing users',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    })
   }
 })
 
@@ -745,11 +795,22 @@ router.put('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, r
       return isNaN(num) ? undefined : num
     }
 
+    const parseBoolean = (value) => {
+      if (value === true || value === false) return value
+      if (value === undefined || value === null) return undefined
+      const s = String(value).trim().toLowerCase()
+      if (s === 'true' || s === 'yes' || s === '1' || s === 'on') return true
+      if (s === 'false' || s === 'no' || s === '0' || s === 'off' || s === '') return false
+      return undefined
+    }
+
     // Date fields that need conversion
     const dateFields = ['dateOfBirth', 'birthdayDate', 'marriageDate', 'joiningDate', 'confirmDate', 'completedOn', 'pfJoiningDate']
 
     // Number fields that need conversion
     const numberFields = ['probationPeriod', 'noticePeriod', 'salary']
+
+    const booleanFields = ['isPhysicallyChallenged', 'isInternationalEmployee', 'isEligibleForPF', 'eligibleForExcessEPFContribution', 'isEligibleForExcessEPSContribution', 'isExistingMemberOfPF', 'isEligibleForESI', 'isCoveredUnderLWF', 'isActive']
 
     // Build update object
     const updateData = {}
@@ -768,7 +829,10 @@ router.put('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, r
     if (fullName) updateData.fullName = fullName
     if (username || loginUsername) updateData.username = username || loginUsername || employeeId || officialEmail?.split('@')[0]
     if (password) updateData.password = password // Will be hashed by pre-save hook
-    if (isActive !== undefined) updateData.isActive = isActive
+    if (isActive !== undefined) {
+      const parsed = parseBoolean(isActive)
+      if (parsed !== undefined) updateData.isActive = parsed
+    }
     if (assignedProjects !== undefined) updateData.assignedProjects = assignedProjects
 
     // Check uniqueness for critical fields before updating
@@ -831,6 +895,14 @@ router.put('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, r
         const parsed = parseNumber(updateData[field])
         if (parsed !== undefined) updateData[field] = parsed
         else delete updateData[field]
+      }
+    })
+
+    // Convert boolean fields (form may send "Yes"/"No" or string "true"/"false")
+    booleanFields.forEach(field => {
+      if (updateData[field] !== undefined && updateData[field] !== null) {
+        const parsed = parseBoolean(updateData[field])
+        if (parsed !== undefined) updateData[field] = parsed
       }
     })
 
