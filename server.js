@@ -98,7 +98,13 @@ app.use('/api/cms', cmsRoutes)
 app.use('/api/policies', policiesRoutes)
 // Assessments: explicit CORS for assessments.artihcus.com (handles proxy/preflight issues)
 const assessmentsCors = cors({
-  origin: ['https://assessments.artihcus.com', 'http://localhost:5173', 'http://localhost:5174'],
+  origin: [
+    'https://assessments.artihcus.com',
+    'https://hr.artihcus.com',
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:5175'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
