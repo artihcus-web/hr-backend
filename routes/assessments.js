@@ -4,7 +4,9 @@ import mongoose from 'mongoose'
 import { GridFSBucket } from 'mongodb'
 import { ObjectId } from 'mongodb'
 import AssessmentAccessRequest from '../models/AssessmentAccessRequest.js'
+import AssessmentDepartment from '../models/AssessmentDepartment.js'
 import AssessmentModule from '../models/AssessmentModule.js'
+import AssessmentTest from '../models/AssessmentTest.js'
 import AssessmentQuestion from '../models/AssessmentQuestion.js'
 import AssessmentKnowledgeNote from '../models/AssessmentKnowledgeNote.js'
 import User from '../models/User.js'
@@ -47,7 +49,7 @@ function getAssessmentNotesBucket() {
 // Public: Submit access request (from assessments app)
 router.post('/access-requests', async (req, res) => {
   try {
-    const { employeeId } = req.body
+    const { employeeId, departmentId } = req.body
     if (!employeeId || !String(employeeId).trim()) {
       return res.status(400).json({ message: 'Employee ID is required' })
     }
@@ -63,6 +65,12 @@ router.post('/access-requests', async (req, res) => {
       return res.status(404).json({ message: 'Employee not found. Please check your Employee ID.' })
     }
 
+    let departmentName = ''
+    if (departmentId) {
+      const dept = await AssessmentDepartment.findById(departmentId).select('name').lean()
+      departmentName = dept?.name || ''
+    }
+
     // Check for existing pending request (one at a time per employee)
     const existing = await AssessmentAccessRequest.findOne({
       employeeId: user.employeeId || trimmedId,
@@ -74,7 +82,9 @@ router.post('/access-requests', async (req, res) => {
 
     // Each new session requires fresh approval - no auto-access for previously approved users
     const request = new AssessmentAccessRequest({
-      employeeId: user.employeeId || trimmedId
+      employeeId: user.employeeId || trimmedId,
+      departmentId: departmentId || undefined,
+      departmentName: departmentName || undefined
     })
     await request.save()
 
@@ -128,19 +138,26 @@ router.get('/access-requests', authenticate, requireRole('admin', 'super_admin',
       .sort({ createdAt: -1 })
       .populate('approvedBy', 'fullName')
 
-    // Enrich with user data (fullName, officialEmail) from User
+    // Enrich with user data (fullName, officialEmail) and department
     const enriched = await Promise.all(requests.map(async (r) => {
       const user = await User.findOne({ employeeId: r.employeeId })
         .select('fullName officialEmail employeeId firstName lastName')
       const name = user
         ? (user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || user.officialEmail)
         : r.employeeId
+      let departmentName = r.departmentName
+      if (!departmentName && r.departmentId) {
+        const dept = await AssessmentDepartment.findById(r.departmentId).select('name').lean()
+        departmentName = dept?.name || ''
+      }
       return {
         _id: r._id,
         id: r._id,
         employeeId: r.employeeId,
         requesterName: name,
         officialEmail: user?.officialEmail || '',
+        departmentId: r.departmentId,
+        departmentName: departmentName || '',
         createdAt: r.createdAt,
         status: r.status
       }
@@ -214,7 +231,60 @@ router.put('/access-requests/:id/reject', authenticate, requireRole('admin', 'su
   }
 })
 
-// ========== Modules (admin + public for test-taking) ==========
+// ========== Departments (public list for Login dropdown + admin CRUD) ==========
+
+// Public: List departments (for Login dropdown and assessments app)
+router.get('/departments', async (req, res) => {
+  try {
+    const departments = await AssessmentDepartment.find({}).sort({ name: 1 }).lean()
+    res.json({ departments: departments.map(d => ({ _id: d._id, id: d._id, name: d.name, description: d.description || '' })) })
+  } catch (error) {
+    console.error('List departments error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Create department
+router.post('/departments', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const { name, description } = req.body
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ message: 'Department name is required' })
+    }
+    const department = new AssessmentDepartment({
+      name: String(name).trim(),
+      description: description ? String(description).trim() : ''
+    })
+    await department.save()
+    res.status(201).json({ department: { _id: department._id, id: department._id, name: department.name, description: department.description } })
+  } catch (error) {
+    console.error('Create department error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Delete department (and its modules/tests/questions - cascade)
+router.delete('/departments/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const department = await AssessmentDepartment.findById(req.params.id)
+    if (!department) return res.status(404).json({ message: 'Department not found' })
+    const modules = await AssessmentModule.find({ departmentId: req.params.id }).lean()
+    const moduleIds = modules.map(m => m._id)
+    const tests = await AssessmentTest.find({ moduleId: { $in: moduleIds } }).lean()
+    const testIds = tests.map(t => t._id)
+    await AssessmentQuestion.deleteMany({ testId: { $in: testIds } })
+    await AssessmentTest.deleteMany({ moduleId: { $in: moduleIds } })
+    await AssessmentKnowledgeNote.deleteMany({ moduleId: { $in: moduleIds } })
+    await AssessmentModule.deleteMany({ departmentId: req.params.id })
+    await AssessmentDepartment.findByIdAndDelete(req.params.id)
+    res.json({ message: 'Department deleted' })
+  } catch (error) {
+    console.error('Delete department error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ========== Modules (admin + public) ==========
 
 // Public: Download Excel template for questions upload
 router.get('/questions-template', (_req, res) => {
@@ -240,30 +310,56 @@ router.get('/questions-template', (_req, res) => {
   }
 })
 
-// Public: List modules (for assessments app – select module to take test)
+// Public: List modules (optional ?departmentId= filter)
 router.get('/modules', async (req, res) => {
   try {
-    const modules = await AssessmentModule.find({}).sort({ createdAt: -1 }).lean()
-    res.json({ modules: modules.map(m => ({ _id: m._id, id: m._id, name: m.name, description: m.description || '' })) })
+    const filter = {}
+    if (req.query.departmentId) filter.departmentId = req.query.departmentId
+    const modules = await AssessmentModule.find(filter).populate('departmentId', 'name').sort({ createdAt: -1 }).lean()
+    res.json({
+      modules: modules.map(m => ({
+        _id: m._id,
+        id: m._id,
+        departmentId: m.departmentId?._id || m.departmentId,
+        departmentName: m.departmentId?.name || '',
+        name: m.name,
+        description: m.description || ''
+      }))
+    })
   } catch (error) {
     console.error('List modules error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Create module
+// Admin: Create module (departmentId required)
 router.post('/modules', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
-    const { name, description } = req.body
+    const { name, description, departmentId } = req.body
     if (!name || !String(name).trim()) {
       return res.status(400).json({ message: 'Module name is required' })
     }
+    if (!departmentId) {
+      return res.status(400).json({ message: 'Department is required' })
+    }
+    const department = await AssessmentDepartment.findById(departmentId)
+    if (!department) return res.status(400).json({ message: 'Department not found' })
     const module = new AssessmentModule({
+      departmentId,
       name: String(name).trim(),
       description: description ? String(description).trim() : ''
     })
     await module.save()
-    res.status(201).json({ module: { _id: module._id, id: module._id, name: module.name, description: module.description } })
+    res.status(201).json({
+      module: {
+        _id: module._id,
+        id: module._id,
+        departmentId: module.departmentId,
+        departmentName: department.name,
+        name: module.name,
+        description: module.description
+      }
+    })
   } catch (error) {
     console.error('Create module error:', error)
     res.status(500).json({ message: 'Server error' })
@@ -273,16 +369,89 @@ router.post('/modules', authenticate, requireRole('admin', 'super_admin', 'hr'),
 // Public: Get single module (for assessments app)
 router.get('/modules/:id', async (req, res) => {
   try {
-    const module = await AssessmentModule.findById(req.params.id).lean()
+    const module = await AssessmentModule.findById(req.params.id).populate('departmentId', 'name').lean()
     if (!module) return res.status(404).json({ message: 'Module not found' })
-    res.json({ module: { _id: module._id, id: module._id, name: module.name, description: module.description } })
+    res.json({
+      module: {
+        _id: module._id,
+        id: module._id,
+        departmentId: module.departmentId?._id || module.departmentId,
+        departmentName: module.departmentId?.name || '',
+        name: module.name,
+        description: module.description
+      }
+    })
   } catch (error) {
     console.error('Get module error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Delete module (and its questions and knowledge notes)
+// Public: List all tests (for assessments app – select test to take). Returns tests with module and department names.
+router.get('/tests', async (req, res) => {
+  try {
+    const tests = await AssessmentTest.find({})
+      .populate('moduleId', 'name departmentId')
+      .sort({ order: 1, createdAt: 1 })
+      .lean()
+    const departmentIds = [...new Set(tests.map(t => t.moduleId?.departmentId).filter(Boolean))]
+    const departments = await AssessmentDepartment.find({ _id: { $in: departmentIds } }).select('name').lean()
+    const deptByName = Object.fromEntries(departments.map(d => [String(d._id), d.name]))
+    res.json({
+      tests: tests.map(t => ({
+        _id: t._id,
+        id: t._id,
+        moduleId: t.moduleId?._id || t.moduleId,
+        moduleName: t.moduleId?.name || '',
+        departmentId: t.moduleId?.departmentId?._id || t.moduleId?.departmentId,
+        departmentName: deptByName[String(t.moduleId?.departmentId?._id || t.moduleId?.departmentId)] || '',
+        name: t.name,
+        description: t.description || '',
+        order: t.order
+      }))
+    })
+  } catch (error) {
+    console.error('List all tests error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// List tests for a module (admin + public for listing)
+router.get('/modules/:moduleId/tests', async (req, res) => {
+  try {
+    const tests = await AssessmentTest.find({ moduleId: req.params.moduleId }).sort({ order: 1, createdAt: 1 }).lean()
+    res.json({ tests: tests.map(t => ({ _id: t._id, id: t._id, moduleId: t.moduleId, name: t.name, description: t.description || '', order: t.order })) })
+  } catch (error) {
+    console.error('List tests error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Create test under a module
+router.post('/modules/:moduleId/tests', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const module = await AssessmentModule.findById(req.params.moduleId)
+    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const { name, description } = req.body
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ message: 'Test name is required' })
+    }
+    const count = await AssessmentTest.countDocuments({ moduleId: req.params.moduleId })
+    const test = new AssessmentTest({
+      moduleId: req.params.moduleId,
+      name: String(name).trim(),
+      description: description ? String(description).trim() : '',
+      order: count
+    })
+    await test.save()
+    res.status(201).json({ test: { _id: test._id, id: test._id, moduleId: test.moduleId, name: test.name, description: test.description, order: test.order } })
+  } catch (error) {
+    console.error('Create test error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Delete module (and its tests, questions, knowledge notes)
 router.delete('/modules/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
     const module = await AssessmentModule.findById(req.params.id)
@@ -299,7 +468,10 @@ router.delete('/modules/:id', authenticate, requireRole('admin', 'super_admin', 
       }
     }
     await AssessmentKnowledgeNote.deleteMany({ moduleId: req.params.id })
-    await AssessmentQuestion.deleteMany({ moduleId: req.params.id })
+    const tests = await AssessmentTest.find({ moduleId: req.params.id }).lean()
+    const testIds = tests.map(t => t._id)
+    await AssessmentQuestion.deleteMany({ testId: { $in: testIds } })
+    await AssessmentTest.deleteMany({ moduleId: req.params.id })
     await AssessmentModule.findByIdAndDelete(req.params.id)
     res.json({ message: 'Module deleted' })
   } catch (error) {
@@ -308,57 +480,111 @@ router.delete('/modules/:id', authenticate, requireRole('admin', 'super_admin', 
   }
 })
 
-// Public: Get module settings (for test-taking)
-router.get('/modules/:id/settings', async (req, res) => {
+// ========== Tests (per module: settings, questions, take test, submit) ==========
+
+// Get one test
+router.get('/tests/:id', async (req, res) => {
   try {
-    const module = await AssessmentModule.findById(req.params.id).select('settings').lean()
-    if (!module) return res.status(404).json({ message: 'Module not found' })
-    res.json({ settings: module.settings || {} })
+    const test = await AssessmentTest.findById(req.params.id).populate('moduleId', 'name departmentId').lean()
+    if (!test) return res.status(404).json({ message: 'Test not found' })
+    res.json({
+      test: {
+        _id: test._id,
+        id: test._id,
+        moduleId: test.moduleId?._id || test.moduleId,
+        moduleName: test.moduleId?.name || '',
+        name: test.name,
+        description: test.description || '',
+        order: test.order
+      }
+    })
   } catch (error) {
-    console.error('Get settings error:', error)
+    console.error('Get test error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Update module settings
-router.put('/modules/:id/settings', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+// Admin: Update test (name, description)
+router.put('/tests/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
-    const module = await AssessmentModule.findById(req.params.id)
-    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const test = await AssessmentTest.findById(req.params.id)
+    if (!test) return res.status(404).json({ message: 'Test not found' })
+    const { name, description } = req.body
+    if (name != null) test.name = String(name).trim()
+    if (description != null) test.description = String(description).trim()
+    await test.save()
+    res.json({ test: { _id: test._id, name: test.name, description: test.description } })
+  } catch (error) {
+    console.error('Update test error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Delete test (and its questions)
+router.delete('/tests/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const test = await AssessmentTest.findById(req.params.id)
+    if (!test) return res.status(404).json({ message: 'Test not found' })
+    await AssessmentQuestion.deleteMany({ testId: req.params.id })
+    await AssessmentTest.findByIdAndDelete(req.params.id)
+    res.json({ message: 'Test deleted' })
+  } catch (error) {
+    console.error('Delete test error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Get test settings (for test-taking or admin)
+router.get('/tests/:id/settings', async (req, res) => {
+  try {
+    const test = await AssessmentTest.findById(req.params.id).select('settings').lean()
+    if (!test) return res.status(404).json({ message: 'Test not found' })
+    res.json({ settings: test.settings || {} })
+  } catch (error) {
+    console.error('Get test settings error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Update test settings
+router.put('/tests/:id/settings', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const test = await AssessmentTest.findById(req.params.id)
+    if (!test) return res.status(404).json({ message: 'Test not found' })
     const s = req.body || {}
-    if (!module.settings) module.settings = {}
-    if (s.durationMinutes != null) module.settings.durationMinutes = Number(s.durationMinutes) || 60
-    if (s.totalQuestions != null) module.settings.totalQuestions = Math.max(1, Number(s.totalQuestions) || 20)
-    if (s.passingScore != null) module.settings.passingScore = Math.min(100, Math.max(0, Number(s.passingScore) || 70))
-    if (s.shuffleQuestions != null) module.settings.shuffleQuestions = !!s.shuffleQuestions
-    if (s.shuffleOptions != null) module.settings.shuffleOptions = !!s.shuffleOptions
-    if (s.showResults != null) module.settings.showResults = !!s.showResults
-    if (s.allowRetake != null) module.settings.allowRetake = !!s.allowRetake
-    if (s.rules != null) module.settings.rules = String(s.rules)
-    await module.save()
-    res.json({ settings: module.settings })
+    if (!test.settings) test.settings = {}
+    if (s.durationMinutes != null) test.settings.durationMinutes = Number(s.durationMinutes) || 60
+    if (s.totalQuestions != null) test.settings.totalQuestions = Math.max(1, Number(s.totalQuestions) || 20)
+    if (s.passingScore != null) test.settings.passingScore = Math.min(100, Math.max(0, Number(s.passingScore) || 70))
+    if (s.shuffleQuestions != null) test.settings.shuffleQuestions = !!s.shuffleQuestions
+    if (s.shuffleOptions != null) test.settings.shuffleOptions = !!s.shuffleOptions
+    if (s.showResults != null) test.settings.showResults = !!s.showResults
+    if (s.allowRetake != null) test.settings.allowRetake = !!s.allowRetake
+    if (s.rules != null) test.settings.rules = String(s.rules)
+    await test.save()
+    res.json({ settings: test.settings })
   } catch (error) {
-    console.error('Update settings error:', error)
+    console.error('Update test settings error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Get module questions (full, with correct answers – for admin UI)
-router.get('/modules/:id/questions', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+// Admin: Get test questions (full, with correct answers)
+router.get('/tests/:id/questions', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
-    const questions = await AssessmentQuestion.find({ moduleId: req.params.id }).sort({ order: 1 }).lean()
+    const questions = await AssessmentQuestion.find({ testId: req.params.id }).sort({ order: 1 }).lean()
     res.json({ questions })
   } catch (error) {
-    console.error('Get questions error:', error)
+    console.error('Get test questions error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Upload Excel – parse and save questions (replace existing for this module)
-router.post('/modules/:id/questions/upload', authenticate, requireRole('admin', 'super_admin', 'hr'), upload.single('file'), async (req, res) => {
+// Admin: Upload Excel – parse and save questions for a test (replace existing)
+router.post('/tests/:id/questions/upload', authenticate, requireRole('admin', 'super_admin', 'hr'), upload.single('file'), async (req, res) => {
   try {
-    const module = await AssessmentModule.findById(req.params.id)
-    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const test = await AssessmentTest.findById(req.params.id)
+    if (!test) return res.status(404).json({ message: 'Test not found' })
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ message: 'Please upload an Excel file (.xlsx)' })
     }
@@ -366,9 +592,9 @@ router.post('/modules/:id/questions/upload', authenticate, requireRole('admin', 
     if (parsed.length === 0 && errors.length > 0) {
       return res.status(400).json({ message: 'No valid questions found', errors })
     }
-    await AssessmentQuestion.deleteMany({ moduleId: req.params.id })
+    await AssessmentQuestion.deleteMany({ testId: req.params.id })
     const toInsert = parsed.map((q, i) => ({
-      moduleId: module._id,
+      testId: test._id,
       section: q.section,
       type: q.type,
       text: q.text,
@@ -385,18 +611,18 @@ router.post('/modules/:id/questions/upload', authenticate, requireRole('admin', 
       errors: errors.length > 0 ? errors : undefined
     })
   } catch (error) {
-    console.error('Upload questions error:', error)
+    console.error('Upload test questions error:', error)
     res.status(500).json({ message: error.message || 'Server error' })
   }
 })
 
-// Public: Get test data (module + settings + questions without correctAnswer) for taking the test
-router.get('/modules/:id/test', async (req, res) => {
+// Public: Get test data (settings + questions without correctAnswer) for taking the test
+router.get('/tests/:id/test', async (req, res) => {
   try {
-    const module = await AssessmentModule.findById(req.params.id).lean()
-    if (!module) return res.status(404).json({ message: 'Module not found' })
-    const settings = module.settings || {}
-    let questions = await AssessmentQuestion.find({ moduleId: req.params.id }).sort({ order: 1 }).lean()
+    const test = await AssessmentTest.findById(req.params.id).populate('moduleId', 'name').lean()
+    if (!test) return res.status(404).json({ message: 'Test not found' })
+    const settings = test.settings || {}
+    let questions = await AssessmentQuestion.find({ testId: req.params.id }).sort({ order: 1 }).lean()
     const totalWanted = Math.max(1, settings.totalQuestions || 20)
     if (settings.shuffleQuestions) {
       for (let i = questions.length - 1; i > 0; i--) {
@@ -417,12 +643,12 @@ router.get('/modules/:id/test', async (req, res) => {
       })
     }
     const safe = questions.map(q => {
-      // eslint-disable-next-line no-unused-vars -- omit correctAnswer from client response
       const { correctAnswer, ...rest } = q
       return rest
     })
     res.json({
-      module: { _id: module._id, name: module.name, description: module.description },
+      module: { _id: test.moduleId?._id || test.moduleId, name: test.moduleId?.name || test.name, description: test.description },
+      test: { _id: test._id, name: test.name },
       settings: {
         durationMinutes: settings.durationMinutes || 60,
         passingScore: settings.passingScore || 70,
@@ -438,17 +664,17 @@ router.get('/modules/:id/test', async (req, res) => {
 })
 
 // Public: Submit test answers and get score
-router.post('/modules/:id/submit', async (req, res) => {
+router.post('/tests/:id/submit', async (req, res) => {
   try {
-    const module = await AssessmentModule.findById(req.params.id).lean()
-    if (!module) return res.status(404).json({ message: 'Module not found' })
-    const settings = module.settings || {}
+    const test = await AssessmentTest.findById(req.params.id).lean()
+    if (!test) return res.status(404).json({ message: 'Test not found' })
+    const settings = test.settings || {}
     const { answers } = req.body || {}
     if (!Array.isArray(answers)) {
       return res.status(400).json({ message: 'answers array is required' })
     }
     const questionIds = answers.map(a => a.questionId)
-    const questions = await AssessmentQuestion.find({ _id: { $in: questionIds }, moduleId: req.params.id }).lean()
+    const questions = await AssessmentQuestion.find({ _id: { $in: questionIds }, testId: req.params.id }).lean()
     const byId = Object.fromEntries(questions.map(q => [String(q._id), q]))
     let correctCount = 0
     for (const a of answers) {

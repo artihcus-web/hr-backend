@@ -2,6 +2,8 @@ import mongoose from 'mongoose'
 
 const assessmentAccessRequestSchema = new mongoose.Schema({
   employeeId: { type: String, required: true, trim: true },
+  departmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'AssessmentDepartment' },
+  departmentName: { type: String, trim: true }, // denormalized for display
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],

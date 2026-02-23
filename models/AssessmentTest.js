@@ -1,6 +1,6 @@
 import mongoose from 'mongoose'
 
-const moduleSettingsSchema = new mongoose.Schema({
+const testSettingsSchema = new mongoose.Schema({
   durationMinutes: { type: Number, default: 60, min: 1 },
   totalQuestions: { type: Number, default: 20, min: 1 },
   passingScore: { type: Number, default: 70, min: 0, max: 100 },
@@ -11,15 +11,15 @@ const moduleSettingsSchema = new mongoose.Schema({
   rules: { type: String, default: '' }
 }, { _id: false })
 
-const assessmentModuleSchema = new mongoose.Schema({
-  departmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'AssessmentDepartment' },
+const assessmentTestSchema = new mongoose.Schema({
+  moduleId: { type: mongoose.Schema.Types.ObjectId, ref: 'AssessmentModule', required: true },
   name: { type: String, required: true, trim: true },
   description: { type: String, default: '', trim: true },
-  settings: { type: moduleSettingsSchema, default: () => ({}) }
+  settings: { type: testSettingsSchema, default: () => ({}) },
+  order: { type: Number, default: 0 }
 }, { timestamps: true })
 
-assessmentModuleSchema.index({ departmentId: 1 })
-assessmentModuleSchema.index({ name: 1 })
+assessmentTestSchema.index({ moduleId: 1, order: 1 })
 
-const AssessmentModule = mongoose.model('AssessmentModule', assessmentModuleSchema)
-export default AssessmentModule
+const AssessmentTest = mongoose.model('AssessmentTest', assessmentTestSchema)
+export default AssessmentTest

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 
 const assessmentQuestionSchema = new mongoose.Schema({
-  moduleId: { type: mongoose.Schema.Types.ObjectId, ref: 'AssessmentModule', required: true },
+  testId: { type: mongoose.Schema.Types.ObjectId, ref: 'AssessmentTest', required: true },
   section: { type: String, required: true, trim: true },
   type: {
     type: String,
@@ -18,8 +18,8 @@ const assessmentQuestionSchema = new mongoose.Schema({
   order: { type: Number, default: 0 }
 }, { timestamps: true })
 
-assessmentQuestionSchema.index({ moduleId: 1, order: 1 })
-assessmentQuestionSchema.index({ moduleId: 1, section: 1 })
+assessmentQuestionSchema.index({ testId: 1, order: 1 })
+assessmentQuestionSchema.index({ testId: 1, section: 1 })
 
 const AssessmentQuestion = mongoose.model('AssessmentQuestion', assessmentQuestionSchema)
 export default AssessmentQuestion
