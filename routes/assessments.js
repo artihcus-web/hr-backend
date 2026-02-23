@@ -643,6 +643,7 @@ router.get('/tests/:id/test', async (req, res) => {
       })
     }
     const safe = questions.map(q => {
+      // eslint-disable-next-line no-unused-vars -- omit correctAnswer from client response
       const { correctAnswer, ...rest } = q
       return rest
     })
