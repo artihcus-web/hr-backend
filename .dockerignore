@@ -3,7 +3,24 @@ npm-debug.log
 .env
 .git
 .gitignore
-README.md
 .DS_Store
 *.log
+# Dev/docs (not needed in production image)
+*.md
+!README.md
+.github
+eslint.config.js
+# Local dev / deployment scripts (run on host or CI)
+*.bat
+*.ps1
+*.sh
+# Nginx configs (live on reverse-proxy host)
+nginx*.conf
+*NGINX*.conf
+# Extra compose variants (keep one for prod)
+docker-compose-fixed.yml
+docker-compose-with-mongo.yml
+docker-compose.host.yml
+# Sample data
+SAP_EWM_Questionnaire.xlsx
 
