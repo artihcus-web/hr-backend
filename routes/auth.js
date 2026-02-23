@@ -155,10 +155,14 @@ router.post('/login', async (req, res) => {
     }
 
     const identifier = username.trim()
+    const identifierLower = identifier.toLowerCase()
 
-    // Allow login with either employeeId or officialEmail, using the same input field
+    // Login with official email or employee ID only
     const user = await User.findOne({
-      $or: [{ employeeId: identifier }, { officialEmail: identifier.toLowerCase() }]
+      $or: [
+        { employeeId: identifier },
+        { officialEmail: identifierLower }
+      ]
     })
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' })
