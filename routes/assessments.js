@@ -9,6 +9,7 @@ import AssessmentModule from '../models/AssessmentModule.js'
 import AssessmentTest from '../models/AssessmentTest.js'
 import AssessmentQuestion from '../models/AssessmentQuestion.js'
 import AssessmentKnowledgeNote from '../models/AssessmentKnowledgeNote.js'
+import KnowledgeBaseRequest from '../models/KnowledgeBaseRequest.js'
 import User from '../models/User.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import XLSX from 'xlsx'
@@ -44,6 +45,11 @@ const notesUpload = multer({
 function getAssessmentNotesBucket() {
   const db = mongoose.connection.db
   return db ? new GridFSBucket(db, { bucketName: 'assessmentNotes' }) : null
+}
+
+function getKnowledgeRequestBucket() {
+  const db = mongoose.connection.db
+  return db ? new GridFSBucket(db, { bucketName: 'knowledgeRequestDocs' }) : null
 }
 
 // Public: Submit access request (from assessments app)
@@ -715,125 +721,248 @@ router.post('/tests/:id/submit', async (req, res) => {
   }
 })
 
-// ========== Knowledge Base (notes per module) ==========
+// ========== Knowledge Base (request-based, per-user, secure view-only) ==========
 
-// Public: List knowledge base notes (optional ?moduleId= for filter)
-router.get('/knowledge-base', async (req, res) => {
+// Public: Submit a knowledge base request (user requests a document)
+router.post('/knowledge-requests', async (req, res) => {
   try {
-    const { moduleId } = req.query
-    const filter = {}
-    if (moduleId) filter.moduleId = moduleId
-    const notes = await AssessmentKnowledgeNote.find(filter)
-      .populate('moduleId', 'name')
-      .sort({ createdAt: -1 })
-      .lean()
-    const items = notes.map(n => ({
-      _id: n._id,
-      id: n._id,
-      moduleId: n.moduleId?._id || n.moduleId,
-      moduleName: n.moduleId?.name || '',
-      title: n.title || n.fileName,
-      fileName: n.fileName,
-      mimeType: n.mimeType,
-      createdAt: n.createdAt
-    }))
-    res.json({ items })
+    const { employeeId, description, title } = req.body
+    const desc = (description && String(description).trim()) || ''
+    if (!desc) {
+      return res.status(400).json({ message: 'Please provide a clear description of the document or content you need.' })
+    }
+    const trimmedId = (employeeId && String(employeeId).trim()) || ''
+    if (!trimmedId) {
+      return res.status(400).json({ message: 'Employee ID is required.' })
+    }
+    const user = await User.findOne({
+      $or: [{ employeeId: trimmedId }, { officialEmail: trimmedId.toLowerCase() }]
+    }).select('fullName officialEmail employeeId firstName lastName')
+    if (!user) {
+      return res.status(404).json({ message: 'Employee not found. Please check your Employee ID.' })
+    }
+    const requesterName = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(' ') || user.officialEmail || trimmedId
+    const request = new KnowledgeBaseRequest({
+      employeeId: user.employeeId || trimmedId,
+      requesterName,
+      title: title ? String(title).trim() : '',
+      description: desc,
+      status: 'pending'
+    })
+    await request.save()
+    res.status(201).json({
+      message: 'Your request has been submitted. An admin will review and upload the document when ready.',
+      request: {
+        _id: request._id,
+        id: request._id,
+        status: request.status,
+        description: request.description,
+        createdAt: request.createdAt
+      }
+    })
   } catch (error) {
-    console.error('List knowledge base error:', error)
+    console.error('Knowledge request submit error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Upload a notes document for a module
-router.post('/knowledge-base', authenticate, requireRole('admin', 'super_admin', 'hr'), notesUpload.single('file'), async (req, res) => {
+// Admin: List all knowledge base requests (optional ?status= filter)
+router.get('/knowledge-requests', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
-    const moduleId = req.body.moduleId || req.body.module
-    if (!moduleId) {
-      return res.status(400).json({ message: 'Module is required' })
+    const filter = {}
+    if (req.query.status) filter.status = req.query.status
+    const requests = await KnowledgeBaseRequest.find(filter).sort({ createdAt: -1 }).lean()
+    res.json({
+      requests: requests.map(r => ({
+        _id: r._id,
+        id: r._id,
+        employeeId: r.employeeId,
+        requesterName: r.requesterName,
+        title: r.title,
+        description: r.description,
+        status: r.status,
+        documentTitle: r.documentTitle,
+        fileName: r.fileName,
+        createdAt: r.createdAt,
+        respondedAt: r.respondedAt
+      }))
+    })
+  } catch (error) {
+    console.error('List knowledge requests error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// User: List my knowledge requests (requires employeeId in query - from session)
+router.get('/knowledge-requests/my', async (req, res) => {
+  try {
+    const employeeId = req.query.employeeId && String(req.query.employeeId).trim()
+    if (!employeeId) {
+      return res.status(400).json({ message: 'Employee ID is required.' })
     }
-    const module = await AssessmentModule.findById(moduleId)
-    if (!module) return res.status(404).json({ message: 'Module not found' })
+    const user = await User.findOne({
+      $or: [{ employeeId }, { officialEmail: employeeId.toLowerCase() }]
+    }).select('employeeId')
+    const canonicalId = user?.employeeId || employeeId
+    const requests = await KnowledgeBaseRequest.find({ employeeId: canonicalId }).sort({ createdAt: -1 }).lean()
+    res.json({
+      requests: requests.map(r => ({
+        _id: r._id,
+        id: r._id,
+        title: r.title,
+        description: r.description,
+        status: r.status,
+        documentTitle: r.documentTitle,
+        fileName: r.fileName,
+        createdAt: r.createdAt,
+        respondedAt: r.respondedAt
+      }))
+    })
+  } catch (error) {
+    console.error('My knowledge requests error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Approve request and upload document
+router.put('/knowledge-requests/:id/upload', authenticate, requireRole('admin', 'super_admin', 'hr'), notesUpload.single('file'), async (req, res) => {
+  try {
+    const request = await KnowledgeBaseRequest.findById(req.params.id)
+    if (!request) return res.status(404).json({ message: 'Request not found' })
+    if (request.status !== 'pending') {
+      return res.status(400).json({ message: 'Request is no longer pending' })
+    }
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ message: 'Please upload a file (PDF, DOC, DOCX, or TXT)' })
     }
-    const bucket = getAssessmentNotesBucket()
+    const bucket = getKnowledgeRequestBucket()
     if (!bucket) return res.status(503).json({ message: 'File storage unavailable' })
-    const title = (req.body.title || '').trim() || req.file.originalname || 'Note'
-    const filename = `${moduleId}-${Date.now()}-${(req.file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    const docTitle = (req.body.title || '').trim() || req.file.originalname || 'Document'
+    const filename = `kb-${request._id}-${Date.now()}-${(req.file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')}`
     const uploadStream = bucket.openUploadStream(filename, {
-      metadata: { moduleId: String(moduleId), title }
+      metadata: { requestId: String(request._id), employeeId: request.employeeId }
     })
     uploadStream.end(req.file.buffer)
     await new Promise((resolve, reject) => {
       uploadStream.on('finish', resolve)
       uploadStream.on('error', reject)
     })
-    const note = new AssessmentKnowledgeNote({
-      moduleId,
-      title,
-      fileName: req.file.originalname || filename,
-      mimeType: req.file.mimetype || 'application/octet-stream',
-      gridFsFileId: uploadStream.id
-    })
-    await note.save()
-    res.status(201).json({
-      message: 'Note uploaded',
-      item: {
-        _id: note._id,
-        id: note._id,
-        moduleId: note.moduleId,
-        moduleName: module.name,
-        title: note.title,
-        fileName: note.fileName,
-        mimeType: note.mimeType,
-        createdAt: note.createdAt
+    request.status = 'approved'
+    request.gridFsFileId = uploadStream.id
+    request.documentTitle = docTitle
+    request.fileName = req.file.originalname || filename
+    request.mimeType = req.file.mimetype || 'application/octet-stream'
+    request.respondedAt = new Date()
+    await request.save()
+    res.json({
+      message: 'Document uploaded. The requester can now view it (view-only, no download).',
+      request: {
+        _id: request._id,
+        status: request.status,
+        documentTitle: request.documentTitle,
+        respondedAt: request.respondedAt
       }
     })
   } catch (error) {
-    console.error('Upload knowledge base error:', error)
+    console.error('Knowledge request upload error:', error)
     res.status(500).json({ message: error.message || 'Server error' })
   }
 })
 
-// Public: Download / view a knowledge base note (stream from GridFS)
-router.get('/knowledge-base/:id/download', async (req, res) => {
+// Admin: Reject request
+router.put('/knowledge-requests/:id/reject', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
   try {
-    const note = await AssessmentKnowledgeNote.findById(req.params.id).populate('moduleId', 'name').lean()
-    if (!note) return res.status(404).json({ message: 'Note not found' })
-    const bucket = getAssessmentNotesBucket()
-    if (!bucket) return res.status(503).json({ message: 'File storage unavailable' })
-    const fileId = note.gridFsFileId && (note.gridFsFileId._id || note.gridFsFileId)
-    const oid = fileId instanceof ObjectId ? fileId : new ObjectId(String(fileId))
-    const files = await bucket.find({ _id: oid }).toArray()
-    if (!files.length) return res.status(404).json({ message: 'File not found' })
-    const safeName = (note.fileName || 'download').replace(/[^a-zA-Z0-9._-]/g, '_')
-    res.setHeader('Content-Type', note.mimeType || 'application/octet-stream')
-    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`)
-    const downloadStream = bucket.openDownloadStream(oid)
-    downloadStream.pipe(res)
+    const request = await KnowledgeBaseRequest.findById(req.params.id)
+    if (!request) return res.status(404).json({ message: 'Request not found' })
+    if (request.status !== 'pending') {
+      return res.status(400).json({ message: 'Request is no longer pending' })
+    }
+    request.status = 'rejected'
+    request.respondedAt = new Date()
+    await request.save()
+    res.json({ message: 'Request rejected', request: { _id: request._id, status: request.status } })
   } catch (error) {
-    console.error('Download knowledge base error:', error)
+    console.error('Reject knowledge request error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
 
-// Admin: Delete a knowledge base note
-router.delete('/knowledge-base/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+// Helper: stream document from a KnowledgeBaseRequest (must be approved with gridFsFileId)
+function streamKnowledgeRequestDocument(request, res) {
+  const bucket = getKnowledgeRequestBucket()
+  if (!bucket) {
+    res.status(503).json({ message: 'File storage unavailable' })
+    return
+  }
+  const fileId = request.gridFsFileId && (request.gridFsFileId._id || request.gridFsFileId)
+  const oid = fileId instanceof ObjectId ? fileId : new ObjectId(String(fileId))
+  res.setHeader('Content-Type', request.mimeType || 'application/octet-stream')
+  res.setHeader('Content-Disposition', 'inline')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  res.setHeader('Pragma', 'no-cache')
+  const downloadStream = bucket.openDownloadStream(oid)
+  downloadStream.on('error', () => { try { res.status(500).end() } catch (_) {} })
+  downloadStream.pipe(res)
+}
+
+// Secure view: stream document only to the requester. No download; inline display only.
+router.get('/knowledge-requests/:id/view', async (req, res) => {
   try {
-    const note = await AssessmentKnowledgeNote.findById(req.params.id)
-    if (!note) return res.status(404).json({ message: 'Note not found' })
-    const bucket = getAssessmentNotesBucket()
-    if (bucket) {
-      try {
-        await bucket.delete(note.gridFsFileId)
-      } catch (e) {
-        console.warn('GridFS delete error:', e.message)
+    const request = await KnowledgeBaseRequest.findById(req.params.id).lean()
+    if (!request) return res.status(404).json({ message: 'Not found' })
+    if (request.status !== 'approved' || !request.gridFsFileId) {
+      return res.status(404).json({ message: 'Document not available' })
+    }
+    const employeeId = (req.query.employeeId && String(req.query.employeeId).trim()) || ''
+    const user = await User.findOne({
+      $or: [{ employeeId: employeeId }, { officialEmail: employeeId.toLowerCase() }]
+    }).select('employeeId')
+    const canonicalId = user?.employeeId || employeeId
+    if (request.employeeId !== canonicalId) {
+      return res.status(403).json({ message: 'You do not have access to this document.' })
+    }
+    streamKnowledgeRequestDocument(request, res)
+  } catch (error) {
+    console.error('Knowledge request view error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: view any approved document (same stream, no download)
+router.get('/knowledge-requests/:id/admin-view', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const request = await KnowledgeBaseRequest.findById(req.params.id).lean()
+    if (!request) return res.status(404).json({ message: 'Not found' })
+    if (request.status !== 'approved' || !request.gridFsFileId) {
+      return res.status(404).json({ message: 'Document not available' })
+    }
+    streamKnowledgeRequestDocument(request, res)
+  } catch (error) {
+    console.error('Knowledge request admin view error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: Delete a knowledge request (and its file if approved)
+router.delete('/knowledge-requests/:id', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const request = await KnowledgeBaseRequest.findById(req.params.id)
+    if (!request) return res.status(404).json({ message: 'Request not found' })
+    if (request.gridFsFileId) {
+      const bucket = getKnowledgeRequestBucket()
+      if (bucket) {
+        try {
+          await bucket.delete(request.gridFsFileId)
+        } catch (e) {
+          console.warn('GridFS delete error:', e.message)
+        }
       }
     }
-    await AssessmentKnowledgeNote.findByIdAndDelete(req.params.id)
-    res.json({ message: 'Note deleted' })
+    await KnowledgeBaseRequest.findByIdAndDelete(req.params.id)
+    res.json({ message: 'Request deleted' })
   } catch (error) {
-    console.error('Delete knowledge base error:', error)
+    console.error('Delete knowledge request error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
