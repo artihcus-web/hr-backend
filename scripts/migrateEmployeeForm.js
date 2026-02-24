@@ -113,7 +113,7 @@ const employeeFormConfig = {
                 { name: 'officialEmail', label: 'Official Email ID', type: 'email', required: true, helpText: 'This email will be used for login and all system notifications', order: 1, width: 'full', isActive: true },
                 { name: 'businessUnitHR', label: 'Department/Business Unit', type: 'select', required: false, options: ['BU1', 'BU2', 'BU3'], order: 2, width: 'half', isActive: true },
                 { name: 'designation', label: 'Designation', type: 'text', required: false, order: 3, width: 'half', isActive: true },
-                { name: 'role', label: 'Role', type: 'select', required: true, options: ['employee', 'manager', 'hr', 'admin', 'c-suite', 'tl', 'supermanager'], order: 4, width: 'half', isActive: true },
+                { name: 'role', label: 'Role', type: 'select', required: true, options: ['admin', 'c-suite', 'hr', 'manager', 'supermanager', 'tl', 'employee', 'client'], order: 4, width: 'half', isActive: true },
                 { name: 'employeeStatus', label: 'Employee Status', type: 'select', required: true, options: ['Active', 'Inactive'], order: 5, width: 'half', isActive: true },
                 { name: 'joiningDate', label: 'Joining Date', type: 'date', required: false, order: 6, width: 'half', isActive: true },
                 { name: 'probationPeriod', label: 'Probation Period (days)', type: 'number', required: false, order: 7, width: 'half', isActive: true },
