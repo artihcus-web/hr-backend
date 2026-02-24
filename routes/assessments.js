@@ -129,7 +129,8 @@ router.get('/access-requests/check/:employeeId', async (req, res) => {
     res.json({
       status: request.status,
       requestId: request._id,
-      approvedAt: request.approvedAt
+      approvedAt: request.approvedAt,
+      departmentId: request.departmentId ? String(request.departmentId) : undefined
     })
   } catch (error) {
     console.error('Check access status error:', error)
@@ -394,9 +395,15 @@ router.get('/modules/:id', async (req, res) => {
 })
 
 // Public: List all tests (for assessments app – select test to take). Returns tests with module and department names.
+// Optional query: departmentId – only return tests whose module belongs to this department.
 router.get('/tests', async (req, res) => {
   try {
-    const tests = await AssessmentTest.find({})
+    let filter = {}
+    if (req.query.departmentId) {
+      const moduleIds = await AssessmentModule.find({ departmentId: req.query.departmentId }).select('_id').lean()
+      filter.moduleId = { $in: moduleIds.map(m => m._id) }
+    }
+    const tests = await AssessmentTest.find(filter)
       .populate('moduleId', 'name departmentId')
       .sort({ order: 1, createdAt: 1 })
       .lean()
