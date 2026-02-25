@@ -431,8 +431,8 @@ router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res)
     // Number fields that need conversion
     const numberFields = ['probationPeriod', 'noticePeriod', 'salary', 'numberOfChildren']
 
-    // Boolean fields (form may send "Yes"/"No" or string "true"/"false")
-    const booleanFields = ['isPhysicallyChallenged', 'isInternationalEmployee', 'isEligibleForPF', 'eligibleForExcessEPFContribution', 'isEligibleForExcessEPSContribution', 'isExistingMemberOfPF', 'isEligibleForESI', 'isCoveredUnderLWF', 'isActive']
+    // Boolean fields (form may send "Yes"/"No" or string "true"/"false"). isPhysicallyChallenged omitted: schema-driven (dropdown→string, checkbox→boolean, text→string)
+    const booleanFields = ['isInternationalEmployee', 'isEligibleForPF', 'eligibleForExcessEPFContribution', 'isEligibleForExcessEPSContribution', 'isExistingMemberOfPF', 'isEligibleForESI', 'isCoveredUnderLWF', 'isActive']
 
     // Build user data object (avoid email: null to prevent E11000 duplicate key on email index)
     const finalEmail = email && String(email).trim()
@@ -452,6 +452,13 @@ router.post('/users', authenticate, requireRole('admin', 'hr'), async (req, res)
       assignedProjects,
       ...otherFields
     }
+
+    // Normalize Physically Challenged: accept either key (form may send "Physically Challenged" or "isPhysicallyChallenged") and store as string or boolean
+    const pcValue = userData.isPhysicallyChallenged ?? userData['Physically Challenged']
+    if (pcValue !== undefined && pcValue !== null) {
+      userData.isPhysicallyChallenged = typeof pcValue === 'string' ? pcValue.trim() : pcValue
+    }
+    delete userData['Physically Challenged']
 
     // Convert date fields
     dateFields.forEach(field => {
@@ -814,7 +821,8 @@ router.put('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, r
     // Number fields that need conversion
     const numberFields = ['probationPeriod', 'noticePeriod', 'salary']
 
-    const booleanFields = ['isPhysicallyChallenged', 'isInternationalEmployee', 'isEligibleForPF', 'eligibleForExcessEPFContribution', 'isEligibleForExcessEPSContribution', 'isExistingMemberOfPF', 'isEligibleForESI', 'isCoveredUnderLWF', 'isActive']
+    // isPhysicallyChallenged omitted: schema-driven (dropdown→string, checkbox→boolean, text→string)
+    const booleanFields = ['isInternationalEmployee', 'isEligibleForPF', 'eligibleForExcessEPFContribution', 'isEligibleForExcessEPSContribution', 'isExistingMemberOfPF', 'isEligibleForESI', 'isCoveredUnderLWF', 'isActive']
 
     // Build update object
     const updateData = {}
@@ -878,6 +886,13 @@ router.put('/users/:id', authenticate, requireRole('admin', 'hr'), async (req, r
         updateData[key] = otherFields[key]
       }
     })
+
+    // Normalize Physically Challenged: accept either key and store as-is (string or boolean)
+    const pcUpdate = updateData.isPhysicallyChallenged ?? updateData['Physically Challenged']
+    if (pcUpdate !== undefined && pcUpdate !== null) {
+      updateData.isPhysicallyChallenged = typeof pcUpdate === 'string' ? pcUpdate.trim() : pcUpdate
+    }
+    delete updateData['Physically Challenged']
 
     // Never store profile image as base64; use avatar upload endpoint
     if (updateData.profileImage && String(updateData.profileImage).startsWith('data:image')) {

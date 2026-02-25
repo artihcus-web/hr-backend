@@ -97,7 +97,8 @@ const userSchema = new mongoose.Schema({
 
   emergencyContactName: String,
   emergencyContactNumber: String,
-  isPhysicallyChallenged: { type: Boolean, default: false },
+  // Schema-driven: checkbox → boolean, dropdown/text → string
+  isPhysicallyChallenged: { type: mongoose.Schema.Types.Mixed, default: false },
   physicallyChallengedDetails: String,
   isInternationalEmployee: { type: Boolean, default: false },
   countryOfOrigin: String,
