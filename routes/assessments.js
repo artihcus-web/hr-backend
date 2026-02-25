@@ -1067,7 +1067,12 @@ function streamKnowledgeRequestDocument(request, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private')
   res.setHeader('Pragma', 'no-cache')
   const downloadStream = bucket.openDownloadStream(oid)
-  downloadStream.on('error', () => { try { res.status(500).end() } catch (_) {} })
+  downloadStream.on('error', (err) => {
+    console.error('Knowledge request document stream error:', err)
+    if (!res.headersSent) {
+      res.status(500).end()
+    }
+  })
   downloadStream.pipe(res)
 }
 

@@ -97,7 +97,8 @@ const userSchema = new mongoose.Schema({
 
   emergencyContactName: String,
   emergencyContactNumber: String,
-  isPhysicallyChallenged: { type: Boolean, default: false },
+  // Schema-driven: checkbox → boolean, dropdown/text → string
+  isPhysicallyChallenged: { type: mongoose.Schema.Types.Mixed, default: false },
   physicallyChallengedDetails: String,
   isInternationalEmployee: { type: Boolean, default: false },
   countryOfOrigin: String,
@@ -133,6 +134,7 @@ const userSchema = new mongoose.Schema({
   managerId: String,
   superManagerId: String,
   confirmDate: Date,
+  completedOn: Date,
   probationPeriod: Number,
   noticePeriod: Number,
   division: String,
@@ -195,10 +197,17 @@ const userSchema = new mongoose.Schema({
     fileName: String,
     fileUrl: String // If storing URL or path
   }],
+  // Identity document numbers (for uniqueness checks and display)
+  aadharNumber: String,
+  panNumber: String,
+  passportNumber: String,
+  drivingLicense: String,
+  voterId: String,
 
   // PF Details
   isEligibleForPF: { type: Boolean, default: false },
   pfNumber: String,
+  universalAccountNumber: String,
   pfScheme: String,
   pfJoiningDate: Date,
   eligibleForExcessEPFContribution: { type: Boolean, default: false },
