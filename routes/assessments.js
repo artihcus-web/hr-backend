@@ -7,6 +7,7 @@ import AssessmentAccessRequest from '../models/AssessmentAccessRequest.js'
 import AssessmentDepartment from '../models/AssessmentDepartment.js'
 import AssessmentModule from '../models/AssessmentModule.js'
 import AssessmentTest from '../models/AssessmentTest.js'
+import AssessmentTestAttempt from '../models/AssessmentTestAttempt.js'
 import AssessmentQuestion from '../models/AssessmentQuestion.js'
 import AssessmentKnowledgeNote from '../models/AssessmentKnowledgeNote.js'
 import KnowledgeBaseRequest from '../models/KnowledgeBaseRequest.js'
@@ -680,10 +681,10 @@ router.get('/tests/:id/test', async (req, res) => {
 // Public: Submit test answers and get score
 router.post('/tests/:id/submit', async (req, res) => {
   try {
-    const test = await AssessmentTest.findById(req.params.id).lean()
+    const test = await AssessmentTest.findById(req.params.id).populate('moduleId', 'name departmentId').lean()
     if (!test) return res.status(404).json({ message: 'Test not found' })
     const settings = test.settings || {}
-    const { answers } = req.body || {}
+    const { answers, meta } = req.body || {}
     if (!Array.isArray(answers)) {
       return res.status(400).json({ message: 'answers array is required' })
     }
@@ -691,6 +692,9 @@ router.post('/tests/:id/submit', async (req, res) => {
     const questions = await AssessmentQuestion.find({ _id: { $in: questionIds }, testId: req.params.id }).lean()
     const byId = Object.fromEntries(questions.map(q => [String(q._id), q]))
     let correctCount = 0
+    const questionAttempts = []
+    const answeredSet = new Set()
+    const visitedSet = new Set((meta?.visitedQuestionIds || []).map(String))
     for (const a of answers) {
       const q = byId[a.questionId]
       if (!q) continue
@@ -698,6 +702,7 @@ router.post('/tests/:id/submit', async (req, res) => {
       const userLower = userVal.toLowerCase()
       const correct = (q.correctAnswer || '').trim()
       const correctLower = correct.toLowerCase()
+      let isCorrect = false
       if (q.type === 'mcq' || q.type === 'yes_no') {
         let correctLabel = correct
         if (['a', 'b', 'c', 'd'].includes(correctLower)) {
@@ -706,25 +711,177 @@ router.post('/tests/:id/submit', async (req, res) => {
           const opt = (q.options || []).find(o => (o.text || '').toLowerCase() === correctLower)
           if (opt?.label) correctLabel = opt.label.toLowerCase()
         }
-        if (userLower === correctLabel) correctCount++
+        if (userLower === correctLabel) {
+          correctCount++
+          isCorrect = true
+        }
       } else {
         const accepted = correct.split('|').map(s => s.trim().toLowerCase()).filter(Boolean)
-        if (accepted.length && accepted.includes(userLower)) correctCount++
-        else if (userLower === correctLower) correctCount++
+        if (accepted.length && accepted.includes(userLower)) {
+          correctCount++
+          isCorrect = true
+        } else if (userLower === correctLower) {
+          correctCount++
+          isCorrect = true
+        }
       }
+      if (userVal) answeredSet.add(String(q._id))
+      questionAttempts.push({
+        questionId: q._id,
+        section: q.section || '',
+        type: q.type || '',
+        text: q.text || '',
+        answered: !!userVal,
+        visited: visitedSet.has(String(q._id)),
+        userAnswer: userVal,
+        correctAnswer: correct,
+        isCorrect
+      })
     }
     const total = questions.length
     const percent = total ? Math.round((correctCount / total) * 100) : 0
     const passingScore = settings.passingScore != null ? Number(settings.passingScore) : 70
-    res.json({
+    const responsePayload = {
       score: percent,
       correctCount,
       total,
       passed: percent >= passingScore,
       showResults: settings.showResults !== false
-    })
+    }
+
+    // Persist analytics / attempt record if meta provided with employee + timing
+    if (meta && meta.employeeId && meta.startedAt && meta.endedAt) {
+      try {
+        const startedAt = new Date(meta.startedAt)
+        const endedAt = new Date(meta.endedAt)
+        const durationSeconds = Math.max(0, Math.round((endedAt - startedAt) / 1000))
+        const moduleId = test.moduleId?._id || test.moduleId
+        const departmentId = test.moduleId?.departmentId || undefined
+        await AssessmentTestAttempt.create({
+          employeeId: String(meta.employeeId),
+          testId: test._id,
+          moduleId,
+          departmentId,
+          testName: test.name,
+          moduleName: test.moduleId?.name || '',
+          departmentName: meta.departmentName || '',
+          startedAt,
+          endedAt,
+          durationSeconds,
+          endReasonCode: meta.endReasonCode || 'unknown',
+          endReasonText: meta.endReasonText || '',
+          totalQuestionsServed: total,
+          questionsVisitedCount: Array.isArray(meta.visitedQuestionIds) ? meta.visitedQuestionIds.length : 0,
+          questionsAnsweredCount: answeredSet.size,
+          correctCount,
+          scorePercent: percent,
+          passed: percent >= passingScore,
+          questions: questionAttempts
+        })
+      } catch (e) {
+        console.warn('Failed to save AssessmentTestAttempt:', e.message)
+      }
+    }
+
+    res.json(responsePayload)
   } catch (error) {
     console.error('Submit test error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// ========== Test Reports / Analytics ==========
+
+// Public (per-user): list my attempts with optional filters
+router.get('/reports/my-attempts', async (req, res) => {
+  try {
+    const employeeId = req.query.employeeId && String(req.query.employeeId).trim()
+    if (!employeeId) {
+      return res.status(400).json({ message: 'employeeId is required' })
+    }
+    const filter = { employeeId }
+    if (req.query.moduleId) filter.moduleId = req.query.moduleId
+    if (req.query.testId) filter.testId = req.query.testId
+    if (req.query.from || req.query.to) {
+      filter.startedAt = {}
+      if (req.query.from) filter.startedAt.$gte = new Date(req.query.from)
+      if (req.query.to) filter.startedAt.$lte = new Date(req.query.to)
+    }
+    const attempts = await AssessmentTestAttempt.find(filter).sort({ startedAt: -1 }).lean()
+    res.json({
+      attempts: attempts.map(a => ({
+        _id: a._id,
+        id: a._id,
+        employeeId: a.employeeId,
+        testId: a.testId,
+        moduleId: a.moduleId,
+        departmentId: a.departmentId,
+        testName: a.testName,
+        moduleName: a.moduleName,
+        departmentName: a.departmentName,
+        startedAt: a.startedAt,
+        endedAt: a.endedAt,
+        durationSeconds: a.durationSeconds,
+        endReasonCode: a.endReasonCode,
+        scorePercent: a.scorePercent,
+        passed: a.passed
+      }))
+    })
+  } catch (error) {
+    console.error('List my attempts error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Public (per-user): get full report for a single attempt
+router.get('/reports/attempts/:id', async (req, res) => {
+  try {
+    const attempt = await AssessmentTestAttempt.findById(req.params.id).lean()
+    if (!attempt) return res.status(404).json({ message: 'Report not found' })
+    res.json({ attempt })
+  } catch (error) {
+    console.error('Get attempt report error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: list employees who have at least one attempt
+router.get('/reports/employees', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const pipeline = [
+      { $group: { _id: '$employeeId', attempts: { $sum: 1 }, lastAttemptAt: { $max: '$startedAt' } } },
+      { $sort: { lastAttemptAt: -1 } }
+    ]
+    const grouped = await AssessmentTestAttempt.aggregate(pipeline)
+    res.json({
+      employees: grouped.map(g => ({
+        employeeId: g._id,
+        attempts: g.attempts,
+        lastAttemptAt: g.lastAttemptAt
+      }))
+    })
+  } catch (error) {
+    console.error('List report employees error:', error)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+// Admin: list attempts for a specific employee with optional filters
+router.get('/reports/employees/:employeeId/attempts', authenticate, requireRole('admin', 'super_admin', 'hr'), async (req, res) => {
+  try {
+    const employeeId = String(req.params.employeeId).trim()
+    const filter = { employeeId }
+    if (req.query.moduleId) filter.moduleId = req.query.moduleId
+    if (req.query.testId) filter.testId = req.query.testId
+    if (req.query.from || req.query.to) {
+      filter.startedAt = {}
+      if (req.query.from) filter.startedAt.$gte = new Date(req.query.from)
+      if (req.query.to) filter.startedAt.$lte = new Date(req.query.to)
+    }
+    const attempts = await AssessmentTestAttempt.find(filter).sort({ startedAt: -1 }).lean()
+    res.json({ attempts })
+  } catch (error) {
+    console.error('List employee attempts error:', error)
     res.status(500).json({ message: 'Server error' })
   }
 })
